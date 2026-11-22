@@ -59,23 +59,24 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Install the pinned NAOME Network release
+      - name: Install the pinned NAOME Protocol release
         shell: bash
         run: |
           release=tests/naome-release.json
-          network_version=$(jq -er '.network_version | strings | select(length > 0)' "$release")
+          protocol_version=$(jq -er '.protocol_version | strings | select(length > 0)' "$release")
           sha256=$(jq -er '.macos_arm64_sha256 | strings | select(test("^[0-9a-f]{64}$"))' "$release")
-          naome_binary="$RUNNER_TEMP/naome"
+          asset="nao-v${protocol_version}-aarch64-apple-darwin.tar.gz"
+          directory=$(mktemp -d "$RUNNER_TEMP/nao.XXXXXX")
           curl --fail --location --silent --show-error --retry 3 \
-            --output "$naome_binary" \
-            "https://github.com/naome-core/naome-network/releases/download/v${network_version}/naome-macos-arm64"
-          printf '%s  %s\n' "$sha256" "$naome_binary" | shasum -a 256 -c
-          chmod +x "$naome_binary"
-          printf 'NAOME_TEST_BINARY=%s\n' "$naome_binary" >> "$GITHUB_ENV"
+            --output "$directory/$asset" \
+            "https://github.com/naome-core/naome-protocol/releases/download/v${protocol_version}/$asset"
+          printf '%s  %s\n' "$sha256" "$directory/$asset" | shasum -a 256 -c
+          tar -xzf "$directory/$asset" -C "$directory" ./nao
+          printf 'NAO_TEST_BINARY=%s\n' "$directory/nao" >> "$GITHUB_ENV"
       - name: Run integration tests
         run: |
           python tests/integration.py
           python tests/archive_search.py
           python tests/turn_routing.py
           python tests/project_setup.py
-          python tests/autostart.py
+          python tests/legacy_archives.py

@@ -9,8 +9,7 @@ NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}"
 def configured_labs(project):
     labs = project.get("labs")
     if labs is None:
-        labs = {"default": {"directory": project["lab"], "job": project.get("job"),
-                            "search_head": project.get("search_head")}}
+        labs = {"default": {"directory": project["lab"], "search_head": project.get("search_head")}}
     if not isinstance(labs, dict) or not labs:
         raise ValueError("Configure at least one lab for the NAOME project.")
     resolved = {}
@@ -20,7 +19,7 @@ def configured_labs(project):
         path = Path(settings["directory"])
         if not path.is_absolute():
             raise ValueError("Lab directories must be absolute.")
-        resolved[name.casefold()] = {"name": name, "path": str(path.resolve()), "job": settings.get("job"),
+        resolved[name.casefold()] = {"name": name, "path": str(path.resolve()),
                                      "search_head": settings.get("search_head")}
     if len({lab["path"] for lab in resolved.values()}) != len(resolved):
         raise ValueError("Configure each lab directory only once in a project.")

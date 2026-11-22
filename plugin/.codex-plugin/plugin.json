@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Naome",
     "shortDescription": "Create projects and record lab research",
-    "longDescription": "Create a local research project, optionally with a dedicated network. Archive evidence in its lab and report assigned work to its orchestrator.",
+    "longDescription": "Create local research projects and record, search, and read evidence in their NAOME Protocol archives.",
     "developerName": "NAOME",
     "category": "Productivity",
     "capabilities": [

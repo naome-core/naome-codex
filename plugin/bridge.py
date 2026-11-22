@@ -1,11 +1,11 @@
-"""Persist Codex research records and deliver them using the NAOME lab CLI."""
+"""Persist Codex research records in local NAOME Protocol archives."""
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -16,7 +16,6 @@ from pathlib import Path
 from routing import configured_labs, named_lab
 
 SUPPORT = Path.home() / "Library/Application Support/NAOME Codex"
-ACTIVE = {"assigned", "accepted", "running", "progress"}
 ID = re.compile(r"1:[012]:[0-9a-f]{64}\Z")
 KINDS = {
     "question": "question",
@@ -39,6 +38,19 @@ def encode(value):
 
 def digest(value):
     return hashlib.sha256(encode(value).encode()).hexdigest()
+
+
+def archive_file(lab):
+    return Path(lab) / "archive.sqlite"
+
+
+def archive_command(executable, lab, *args):
+    return [str(executable), "--db", str(archive_file(lab)), *args]
+
+
+def wrong_cli(executable):
+    return (f"The executable at {executable} does not provide the standalone NAOME Protocol CLI. "
+            "Install nao v0.1.6 or set nao to a compatible standalone executable in the Naome Codex config.")
 
 
 def git_common_dir(directory):
@@ -68,9 +80,14 @@ class Bridge:
             self.projects[scope] = project
             self.project_names[scope] = name
             self.project_scopes[name.casefold()] = scope
-        self.naome = Path(self.config.get("naome", str(Path.home() / ".cargo/bin/naome")))
-        if not self.naome.is_absolute():
-            raise ValueError("The naome path must be absolute.")
+        configured = self.config.get("nao")
+        if configured is None:
+            executable = shutil.which("nao")
+            self.nao = Path(executable).resolve() if executable else Path.home() / ".cargo/bin/nao"
+        else:
+            self.nao = Path(configured)
+            if not self.nao.is_absolute():
+                raise ValueError("The nao path must be absolute.")
 
     def project_at(self, cwd):
         if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not self.projects:
@@ -101,12 +118,12 @@ class Bridge:
             with db:
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS binding (
-                        session TEXT PRIMARY KEY, project TEXT NOT NULL, job TEXT,
-                        lab TEXT NOT NULL, token TEXT NOT NULL UNIQUE, UNIQUE(lab, job)
+                        session TEXT PRIMARY KEY, project TEXT NOT NULL,
+                        lab TEXT NOT NULL, token TEXT NOT NULL UNIQUE
                     );
                     CREATE TABLE IF NOT EXISTS entry (
                         session TEXT NOT NULL, offset INTEGER NOT NULL, event TEXT NOT NULL,
-                        document TEXT NOT NULL, job TEXT, stream_offset INTEGER, record TEXT, head TEXT,
+                        document TEXT NOT NULL, record TEXT,
                         captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY(session, offset), UNIQUE(session, event)
                     );
@@ -115,28 +132,28 @@ class Bridge:
                     );
                     CREATE TABLE IF NOT EXISTS turn_route (
                         session TEXT NOT NULL, turn TEXT NOT NULL, destination TEXT, lab_name TEXT,
-                        job TEXT, token TEXT UNIQUE, issue TEXT, PRIMARY KEY(session, turn)
+                        token TEXT UNIQUE, issue TEXT, PRIMARY KEY(session, turn)
                     );
                 """)
                 yield db
         finally:
             db.close()
 
-    def call(self, lab, *args, data=None, timeout=2):
+    def call(self, lab, *args, timeout=2):
         try:
             result = subprocess.run(
-                [str(self.naome), "--directory", lab, "--json", *args],
-                input=data, capture_output=True, text=True, timeout=timeout,
+                archive_command(self.nao, lab, *args), capture_output=True, text=True, timeout=timeout,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise DeliveryError("The local NAOME command is unavailable or timed out.") from error
+            raise DeliveryError(f"The standalone NAOME Protocol CLI at {self.nao} is unavailable or timed out.") from error
         if result.returncode:
-            raise DeliveryError("NAOME did not accept the command. Queued records are retained.")
+            if "unexpected argument '--db'" in result.stderr:
+                raise DeliveryError(wrong_cli(self.nao))
+            raise DeliveryError("NAOME Protocol did not accept the command. Queued records are retained.")
         try:
-            lines = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            return json.loads(result.stdout) if result.stdout.strip() else None
         except ValueError as error:
-            raise DeliveryError("NAOME returned an unreadable response.") from error
-        return lines if args[:2] == ("research", "stream") else (lines[0] if lines else None)
+            raise DeliveryError("NAOME Protocol returned an unreadable response.") from error
 
     def configured_lab(self, binding):
         scope = binding["project"]
@@ -149,11 +166,11 @@ class Bridge:
 
     @staticmethod
     def route(db, where, parameters):
-        # The binding session identifies an enduring local journal and report stream.
-        # A turn route supplies the actual Codex session and its fixed assignment.
+        # The binding session identifies an enduring journal for a chat and lab.
+        # The route supplies the Codex session and its selected destination.
         return db.execute(
             "SELECT b.session, COALESCE(b.project,c.project) AS project, b.lab, t.session AS codex_session, t.turn, "
-            "t.lab_name, t.token, t.job, c.project AS workspace_project FROM turn_route t "
+            "t.lab_name, t.token, c.project AS workspace_project FROM turn_route t "
             "JOIN conversation c ON t.session=c.session LEFT JOIN binding b ON t.destination=b.session "
             f"WHERE t.token IS NOT NULL AND {where}", parameters,
         ).fetchone()
@@ -242,12 +259,11 @@ class Bridge:
             if row["issue"]:
                 return None, row["issue"]
             binding = db.execute("SELECT * FROM binding WHERE session=?", (row["destination"],)).fetchone()
-
-        if binding and (binding["project"] != project or not self.lab_allowed(binding)):
-            return None, "This turn's workspace lab is no longer configured."
-        if not row["token"]:
-            self.finalize_turn(session, turn, binding)
-        with self.open() as db:
+            if binding and (binding["project"] != project or not self.lab_allowed(binding)):
+                return None, "This turn's workspace lab is no longer configured."
+            if not row["token"]:
+                db.execute("UPDATE turn_route SET token=? WHERE session=? AND turn=?",
+                           (secrets.token_urlsafe(24), session, turn))
             row = self.route(db, "t.session=? AND t.turn=? AND c.active_turn=t.turn", (session, turn))
         bound = self.resolve_binding(row)
         return bound, None if bound else "This is no longer the active Codex turn."
@@ -259,14 +275,13 @@ class Bridge:
         if legacy and legacy["project"] == project and legacy["lab"] == path:
             return session
         destination = "lab:" + digest([session, path])
-        db.execute("INSERT OR IGNORE INTO binding VALUES (?, ?, NULL, ?, ?)",
+        db.execute("INSERT OR IGNORE INTO binding(session,project,lab,token) VALUES (?,?,?,?)",
                    (destination, project, path, destination))
         return destination
 
     def select_lab(self, binding, name, remember):
         project, session, turn = binding["project"], binding["codex_session"], binding["turn"]
         lab = named_lab(self.project_labs(project)[0], name)
-        jobs = self.available_jobs(lab["path"])
         with self.open() as db:
             db.execute("BEGIN IMMEDIATE")
             active = self.route(db, "t.token=? AND c.active_turn=t.turn", (binding["token"],))
@@ -280,9 +295,8 @@ class Bridge:
                 ).fetchone()
                 if captured:
                     raise ValueError("Select the lab before recording evidence in this turn.")
-                assignment = self.assign(db, destination, project, lab["path"], lab["job"], jobs)
-                db.execute("UPDATE turn_route SET destination=?,lab_name=?,job=? WHERE session=? AND turn=?",
-                           (destination, lab["name"], assignment, session, turn))
+                db.execute("UPDATE turn_route SET destination=?,lab_name=? WHERE session=? AND turn=?",
+                           (destination, lab["name"], session, turn))
             if remember:
                 db.execute("UPDATE conversation SET default_lab=? WHERE session=?", (lab["path"], session))
         return self.authorized(binding["token"])
@@ -303,59 +317,10 @@ class Bridge:
                 if db.execute("SELECT 1 FROM conversation WHERE session=?", (session,)).fetchone():
                     self.note_turn(db, session, turn, issue="This turn has no enrolled project.")
 
-    def available_jobs(self, path):
-        try:
-            self.require_lab(path)
-            return self.call(path, "research", "jobs", timeout=1.5)
-        except (DeliveryError, OSError):
-            return None
-
-    def finalize_turn(self, session, turn, binding):
-        """Pin an assignment and a capability to the turn before exposing its route."""
-        lab = self.configured_lab(binding) if binding else None
-        jobs = self.available_jobs(lab["path"]) if lab else None
-        with self.open() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT token FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()[0]:
-                return
-            assignment = self.assign(db, binding["session"], binding["project"], lab["path"], lab["job"], jobs) if lab else None
-            db.execute("UPDATE turn_route SET job=?,token=? WHERE session=? AND turn=?",
-                       (assignment, secrets.token_urlsafe(24), session, turn))
-
-    @staticmethod
-    def assign(db, destination, project, path, preferred, jobs):
-        current = db.execute("SELECT job FROM binding WHERE session=?", (destination,)).fetchone()[0]
-        if preferred and current != preferred:
-            current = None
-        if jobs is not None:
-            claimed = {r[0] for r in db.execute(
-                "SELECT job FROM binding WHERE lab=? AND session<>? UNION "
-                "SELECT e.job FROM entry e JOIN binding b USING(session) WHERE b.lab=? AND b.session<>? "
-                "UNION SELECT t.job FROM turn_route t JOIN binding b ON t.destination=b.session "
-                "WHERE b.lab=? AND b.session<>?", (path, destination, path, destination, path, destination),
-            )}
-            eligible = [
-                item["id"] for item in jobs
-                if item["assignment"]["project"] == project and item["input_ready"]
-                and item["phase"] in ACTIVE and item["id"] not in claimed
-                and (not preferred or item["id"] == preferred)
-            ]
-            if current not in eligible:
-                current = eligible[0] if len(eligible) == 1 else None
-        db.execute("UPDATE binding SET job=? WHERE session=?", (current, destination))
-        return current
-
     @staticmethod
     def require_lab(lab):
-        directory = Path(lab)
-        if not (directory / "archive.sqlite").is_file():
+        if not archive_file(lab).is_file():
             raise DeliveryError("The selected laboratory archive is unavailable.")
-        try:
-            role = json.loads((directory / "node.json").read_text())["role"]
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            raise DeliveryError("The selected laboratory node configuration is unavailable.") from error
-        if role != "lab":
-            raise DeliveryError("The selected node must have the lab role.")
 
     def enqueue(self, binding, event, category, subject, fields, references=()):
         document = {
@@ -367,8 +332,6 @@ class Bridge:
             "inputs": [{"role": "references", "target": value} for value in references],
         }
         body = encode(document)
-        if len(body.encode()) > 60000:
-            raise ValueError("The research record exceeds the local stream segment budget.")
         session = binding["session"]
         with self.open() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -384,22 +347,16 @@ class Bridge:
                 return old["offset"]
             offset = db.execute("SELECT COALESCE(MAX(offset)+1,0) FROM entry WHERE session=?",
                                 (session,)).fetchone()[0]
-            job = binding["job"]
-            stream_offset = None
-            if job:
-                stream_offset = db.execute(
-                    "SELECT COALESCE(MAX(stream_offset)+1,0) FROM entry WHERE session=? AND job=?",
-                    (session, job),
-                ).fetchone()[0]
-            db.execute("INSERT INTO entry(session,offset,event,document,job,stream_offset) "
-                       "VALUES (?, ?, ?, ?, ?, ?)", (session, offset, event, body, job, stream_offset))
+            db.execute("INSERT INTO entry(session,offset,event,document) VALUES (?,?,?,?)",
+                       (session, offset, event, body))
         return offset
 
     @staticmethod
     def document(row):
         document = json.loads(row["document"])
         document["fields"]["captured_at"] = row["captured_at"].replace(" ", "T") + "Z"
-        if row["job"]:
+        # Old queued documents used this field in their content-addressed bytes.
+        if "job" in row.keys() and row["job"]:
             document["fields"]["naome_job"] = row["job"]
         return document
 
@@ -408,11 +365,9 @@ class Bridge:
         with self.open() as db:
             if include_chat:
                 db.execute("BEGIN")
-            local, reports = db.execute(
-                "SELECT count(CASE WHEN record IS NULL THEN 1 END), "
-                "count(CASE WHEN job IS NOT NULL AND head IS NULL THEN 1 END) "
-                "FROM entry WHERE session=?", (session,),
-            ).fetchone()
+            local = db.execute(
+                "SELECT count(*) FROM entry WHERE session=? AND record IS NULL", (session,),
+            ).fetchone()[0]
             if offset is None:
                 record = db.execute(
                     "SELECT record FROM entry WHERE session=? AND record IS NOT NULL ORDER BY offset DESC LIMIT 1",
@@ -420,12 +375,10 @@ class Bridge:
                 ).fetchone()
             else:
                 record = db.execute("SELECT record FROM entry WHERE session=? AND offset=?", (session, offset)).fetchone()
-            progress = {"pending_local": local, "pending_reports": reports,
-                        "local_record": record[0] if record else None}
+            progress = {"pending_local": local, "local_record": record[0] if record else None}
             if include_chat:
                 destinations = self.pending_destinations(db, binding)
                 progress["chat_pending_local"] = sum(row["pending_local"] for row in destinations)
-                progress["chat_pending_reports"] = sum(row["pending_reports"] for row in destinations)
         return progress
 
     def recent_research(self, binding, limit):
@@ -490,7 +443,7 @@ class Bridge:
                 evidence.write(encode(self.document(row)))
                 evidence.flush()
                 try:
-                    record = self.call(lab, "archive", "put", evidence.name,
+                    record = self.call(lab, "put", evidence.name,
                                        timeout=min(1.5, remaining))
                     if not isinstance(record, str) or not ID.fullmatch(record):
                         raise DeliveryError("NAOME did not acknowledge the local record.")
@@ -506,17 +459,15 @@ class Bridge:
     def pending_destinations(db, binding):
         session = binding["codex_session"]
         return db.execute(
-            "SELECT b.session, b.project, b.lab, "
-            "count(CASE WHEN e.record IS NULL THEN 1 END) AS pending_local, "
-            "count(CASE WHEN e.job IS NOT NULL AND e.head IS NULL THEN 1 END) AS pending_reports "
+            "SELECT b.session, b.project, b.lab, count(*) AS pending_local "
             "FROM binding b JOIN entry e USING(session) "
-            "WHERE b.project=? AND (e.record IS NULL OR (e.job IS NOT NULL AND e.head IS NULL)) "
+            "WHERE b.project=? AND e.record IS NULL "
             "AND b.session IN (SELECT destination FROM turn_route WHERE session=? UNION SELECT ?) "
             "GROUP BY b.session, b.project, b.lab ORDER BY b.session", (binding["project"], session, session),
         ).fetchall()
 
     def flush(self, binding):
-        """Retry this chat's accepted records using their original lab and assignment."""
+        """Retry this chat's accepted records using their original lab."""
         with self.open() as db:
             destinations = [row for row in self.pending_destinations(db, binding) if self.lab_allowed(row)]
         destinations.sort(key=lambda row: row["session"] != binding["session"])
@@ -529,74 +480,4 @@ class Bridge:
             local = self.archive(destination, budget=remaining)
             if "local_retry" in local:
                 progress["local_retry"] = local["local_retry"]
-        if not destinations:
-            return self.status(binding, include_chat=True)
-
-        lock = self.state.with_suffix(".delivery.lock")
-        with lock.open("a") as handle:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return {**self.status(binding, include_chat=True), **progress, "report_retry": "Delivery is in progress."}
-            deadline = time.monotonic() + 5
-            for destination in destinations:
-                with self.open() as db:
-                    jobs = db.execute(
-                        "SELECT job FROM entry WHERE session=? AND job IS NOT NULL AND head IS NULL "
-                        "GROUP BY job ORDER BY min(offset)", (destination["session"],),
-                    ).fetchall()
-                for (job,) in jobs:
-                    if time.monotonic() >= deadline:
-                        return {**self.status(binding, include_chat=True), **progress, "report_retry": "Delivery budget expired."}
-                    try:
-                        self.require_lab(destination["lab"])
-                        progress.update(self.deliver(destination["lab"], job, destination["session"], deadline))
-                    except DeliveryError as error:
-                        progress["report_retry"] = str(error)
         return {**self.status(binding, include_chat=True), **progress}
-
-    def deliver(self, lab, job, session, deadline):
-        with self.open() as db:
-            candidates = db.execute(
-                "SELECT * FROM entry WHERE session=? AND job=? AND head IS NULL "
-                "ORDER BY stream_offset LIMIT 16", (session, job),
-            ).fetchall()
-        pending = []
-        for row in candidates:
-            if row["record"] is None:
-                break
-            pending.append(row)
-        if not pending:
-            return {}
-        def call(*args, data=None):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise DeliveryError("Delivery budget expired. Queued records are retained.")
-            return self.call(lab, *args, data=data, timeout=min(3, remaining))
-
-        jobs = call("research", "jobs")
-        job_info = next((item for item in jobs if item["id"] == job), None)
-        if not job_info or not job_info["input_ready"] or job_info["phase"] not in ACTIVE:
-            raise DeliveryError("The assigned lab job is no longer ready for reports.")
-        if job_info["phase"] == "assigned":
-            call("research", "report", job, "accepted")
-        if job_info["phase"] in {"assigned", "accepted"}:
-            call("research", "report", job, "running")
-
-        segments = [
-            encode({"offset": row["stream_offset"], "records": [self.document(row)]})
-            for row in pending
-        ]
-        payload = "\n".join(segments) + "\n"
-        receipts = call("research", "stream", job, "codex-" + digest(session)[:20], data=payload)
-        expected = [row["stream_offset"] for row in pending]
-        if [receipt.get("offset") for receipt in receipts] != expected or not all(
-            isinstance(receipt.get("head"), str) and ID.fullmatch(receipt["head"])
-            for receipt in receipts
-        ):
-            raise DeliveryError("NAOME did not acknowledge the full batch.")
-        with self.open() as db:
-            db.executemany("UPDATE entry SET head=? WHERE session=? AND offset=?",
-                           ((receipt["head"], session, row["offset"])
-                            for row, receipt in zip(pending, receipts)))
-        return {"last_head": receipts[-1]["head"]}

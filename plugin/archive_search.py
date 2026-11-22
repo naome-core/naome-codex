@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from bridge import Bridge, DeliveryError, ID, encode
+from bridge import Bridge, DeliveryError, ID, archive_command, encode, wrong_cli
 
 MODES = ("auto", "lexical", "semantic", "hybrid")
 QUERY_LIMIT = 1200
@@ -23,12 +23,14 @@ COVERAGE = ("index_complete", "semantic_index_complete", "limited_coverage", "ve
 def missing_search_session(executable, directory):
     try:
         probe = subprocess.run(
-            [executable, "archive", "search-session", "--help"],
+            archive_command(executable, directory, "search-session", "--help"),
             cwd=directory, capture_output=True, timeout=1,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return probe.returncode != 0 and b"unrecognized subcommand 'search-session'" in probe.stderr
+    return probe.returncode != 0 and any(
+        message in probe.stderr for message in (b"unrecognized subcommand 'search-session'", b"unexpected argument '--db'")
+    )
 
 
 class SearchSession:
@@ -77,7 +79,7 @@ class SearchSession:
         try:
             # A plugin reinstall can remove the server's original working directory.
             self.process = subprocess.Popen(
-                [executable, "--directory", binding["lab"], "--json", "archive", "search-session"],
+                archive_command(executable, binding["lab"], "search-session"),
                 cwd=binding["lab"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=0, start_new_session=True, env=env,
@@ -122,10 +124,7 @@ class SearchSession:
             executable, _, directory, *_ = self.destination
             self.close()
             if missing_search_session(executable, directory):
-                raise DeliveryError(
-                    f"The NAOME CLI at {executable} does not support archive search-session. "
-                    "Install NAOME Network v0.4.0 or set naome to a compatible executable in the Naome Codex config."
-                ) from error
+                raise DeliveryError(wrong_cli(executable)) from error
             raise DeliveryError("The local NAOME search session did not return a valid result.") from error
 
 
@@ -167,7 +166,7 @@ def search_research(bridge, binding, arguments, session):
     if mode != "lexical" and not model:
         raise DeliveryError("Configure a local search.model to run semantic or hybrid search.")
     deadline = time.monotonic() + TIMEOUT
-    session.connect(bridge.naome, binding, head, model, python)
+    session.connect(bridge.nao, binding, head, model, python)
     report = session.find(head, scope, query, mode, limit, deadline, prepare=mode != "lexical")
 
     candidates = [hit for hit in report["hits"] if matches_scope(hit, scope)]

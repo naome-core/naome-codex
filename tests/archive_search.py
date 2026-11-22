@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from integration import ENTRY, NAOME, cli, initialize
+from integration import ENTRY, NAO, cli, initialize
 
 
 def main():
@@ -18,7 +18,6 @@ def main():
         workspace.mkdir()
         for lab in (lab_a, lab_b):
             initialize(lab)
-            (lab / "node.json").write_text(json.dumps({"role": "lab", "listen": "/ip4/127.0.0.1/tcp/0", "peers": []}))
 
         def put(lab, scope, title, summary, links=()):
             document = root / "record.json"
@@ -26,20 +25,19 @@ def main():
                                             "fields": {"summary": summary}, "inputs": [
                                                 {"role": "references", "target": value} for value in links
                                             ]}))
-            return cli(lab, "archive", "put", document)
+            return cli(lab, "put", document)
 
         control = put(lab_a, "calibration", "Daily calibration log", "The equipment was calibrated before collection.")
         foreign = put(lab_a, "another-project", "Foreign private log", "External evidence from another project.")
         approved = put(lab_a, "calibration", "Detector drift over time",
                        "Detector readings slowly drifted. The instrument was recalibrated every morning.",
                        [control, foreign])
-        head_a = cli(lab_a, "archive", "snapshot", "Approved project A", "--root", approved)
+        head_a = cli(lab_a, "snapshot", "Approved project A", "--root", approved)
         newer = put(lab_a, "calibration", "Unapproved newer record", "Later evidence received after approval.")
-        newer_head = cli(lab_a, "archive", "snapshot", "Unapproved newer inventory")
-        cli(lab_a, "archive", "search-head", newer_head)
+        newer_head = cli(lab_a, "snapshot", "Unapproved newer inventory")
+        cli(lab_a, "search-head", newer_head)
         only_b = put(lab_b, "calibration", "Oscillator thermal run", "Temperatures stayed inside the expected range.")
-        head_b = cli(lab_b, "archive", "snapshot", "Approved project B", "--root", only_b)
-        assert all(not cli(lab, "status")["running"] for lab in (lab_a, lab_b))
+        head_b = cli(lab_b, "snapshot", "Approved project B", "--root", only_b)
 
         config = root / "config.json"
         launches = root / "launches"
@@ -48,9 +46,9 @@ def main():
         wrapper.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\nfrom pathlib import Path\n"
-            f"binary = {str(NAOME)!r}\n"
-            "if sys.argv[-2:] == ['archive', 'search-session']:\n"
-            "    assert Path.cwd() == Path(sys.argv[sys.argv.index('--directory') + 1])\n"
+            f"binary = {str(NAO)!r}\n"
+            "if sys.argv[-1:] == ['search-session']:\n"
+            "    assert Path.cwd() == Path(sys.argv[sys.argv.index('--db') + 1]).parent\n"
             f"    with Path({str(launches)!r}).open('a') as log: log.write(str(os.getpid()) + '\\n')\n"
             f"    if Path({str(revoke)!r}).exists():\n"
             f"        config = Path({str(config)!r})\n"
@@ -66,10 +64,10 @@ def main():
             "import os, sys\n"
             "if 'search-session' in sys.argv:\n"
             "    sys.exit(\"error: unrecognized subcommand 'search-session'\")\n"
-            f"os.execv({str(NAOME)!r}, [{str(NAOME)!r}, *sys.argv[1:]])\n"
+            f"os.execv({str(NAO)!r}, [{str(NAO)!r}, *sys.argv[1:]])\n"
         )
         old_cli.chmod(0o700)
-        settings = {"naome": str(wrapper), "projects": {"calibration": {"workspace": str(workspace),
+        settings = {"nao": str(wrapper), "projects": {"calibration": {"workspace": str(workspace),
                     "default_lab": "A", "labs": {"A": {"directory": str(lab_a), "search_head": head_a},
                                                    "B": {"directory": str(lab_b)}}}}}
 
@@ -115,14 +113,14 @@ def main():
 
             try:
                 token = bind("a", "Find previous calibration work.")
-                settings["naome"] = str(old_cli)
+                settings["nao"] = str(old_cli)
                 configure()
                 outdated = call(token, approved)
                 message = outdated["content"][0]["text"]
                 assert outdated["isError"] and all(part in message for part in (
-                    str(old_cli), "archive search-session", "v0.4.0",
+                    str(old_cli), "standalone NAOME Protocol CLI", "v0.1.6",
                 )), message
-                settings["naome"] = str(wrapper)
+                settings["nao"] = str(wrapper)
                 configure()
                 assert call(token, "detector", head=newer_head)["isError"]
                 assert call(token, "detector", mode="semantic")["isError"]
@@ -178,13 +176,12 @@ def main():
 
                 for index in range(33):
                     put(lab_b, "calibration", f"Cold index record {index}", "Additional calibration evidence.")
-                lab_settings["search_head"] = cli(lab_b, "archive", "snapshot", "Fresh search inventory")
+                lab_settings["search_head"] = cli(lab_b, "snapshot", "Fresh search inventory")
                 configure()
-                partial = result(next_token, "nonexistentkeyword", lab="B")
+                partial = result(next_token, "nonexistentkeyword", lab="B", mode="lexical")
                 assert partial["hits"] == [] and partial["coverage"] == "index_incomplete", partial
-                complete = result(next_token, "oscillator", lab="B")
+                complete = result(next_token, "oscillator", lab="B", mode="lexical")
                 assert complete["coverage"] == "complete" and complete["hits"][0]["record_id"] == only_b, complete
-                assert all(not cli(lab, "status")["running"] for lab in (lab_a, lab_b))
             finally:
                 server.stdin.close()
                 assert server.wait(timeout=5) == 0
