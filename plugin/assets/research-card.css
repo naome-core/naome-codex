@@ -2,7 +2,6 @@
   --naome-text: var(--color-text-primary, light-dark(#242528, #ececef));
   --naome-muted: var(--color-text-secondary, light-dark(#565962, #b5b8c0));
   --naome-border: var(--color-border-secondary, light-dark(#e0e2e7, #44464e));
-  --naome-hover: var(--color-background-secondary, light-dark(#eff0f3, #242528));
   --naome-font: var(--font-sans, system-ui, sans-serif);
 }
 .naome-record-list {
@@ -27,12 +26,6 @@
   overflow-wrap: anywhere;
   font: 14px/1.4 var(--naome-font);
 }
-.naome-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
 .naome-card-header {
   display: flex;
   align-items: flex-start;
@@ -56,50 +49,35 @@
   font-size: 12px;
   margin: 1px 0 0;
 }
+.naome-card-body {
+  margin: 12px 0 0 var(--naome-text-inset);
+}
 .naome-card-summary {
-  margin: 5px 0 0 var(--naome-text-inset);
+  margin: 0;
+}
+.naome-card-preview {
   white-space: pre-wrap;
 }
 .naome-card-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  box-sizing: border-box;
-  flex: none;
-  min-height: 26px;
-  max-inline-size: 44%;
-  padding: 2px 8px;
-  border: 1px solid var(--naome-border);
-  border-radius: var(--border-radius-full, 999px);
+  padding: 0;
+  border: 0;
   background: transparent;
-  color: var(--naome-muted);
+  color: inherit;
   font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: start;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
   cursor: pointer;
 }
-.naome-card-toggle:hover { background: var(--naome-hover); color: var(--naome-text); }
+.naome-card-toggle:hover { text-decoration-thickness: 2px; }
 .naome-card-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-.naome-card-toggle::after {
-  content: '';
-  flex: none;
-  width: 5px;
-  height: 5px;
-  border: solid currentColor;
-  border-width: 0 1px 1px 0;
-  transform: translateY(-1px) rotate(45deg);
-}
-.naome-card-toggle[aria-expanded='true']::after {
-  transform: translateY(1px) rotate(225deg);
-}
 .naome-card-fields {
-  margin: 8px 0 0 var(--naome-text-inset);
-  padding: 8px 0 0;
+  margin: 0 0 8px;
+  padding: 10px 0 0;
   border-top: 1px solid var(--naome-border);
 }
-.naome-card-fields > div:not([hidden]) ~ div:not([hidden]) { margin-top: 6px; }
-.naome-card dt { margin: 0 0 1px; color: var(--naome-muted); font-size: 12px; font-weight: 600; }
+.naome-card-fields > div + div { margin-top: 10px; }
+.naome-card dt { margin: 0 0 4px; color: var(--naome-muted); font-size: 12px; font-weight: 600; }
 .naome-card dd { margin: 0; white-space: pre-wrap; }
 .naome-card ul { margin: 0; padding-inline-start: 17px; }
 .naome-card code { font-size: 12px; overflow-wrap: anywhere; }

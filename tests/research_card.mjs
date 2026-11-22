@@ -46,7 +46,7 @@ function cloneCard() {
   const article = node('article');
   const parts = {
     h2: node('h2'), '.naome-card-context': node('p'), button: node('button'),
-    '.naome-card-summary': node('p', true), dl: node('dl', true),
+    '.naome-card-preview': node('span', true), dl: node('dl', true),
   };
   article.querySelector = (selector) => parts[selector];
   article.append(...Object.values(parts));
@@ -104,22 +104,22 @@ view.receive(written);
 assert.equal(view.results.hidden, false);
 assert.equal(view.card()('h2').textContent, 'Synthetic result');
 assert.equal(view.card()('.naome-card-context').textContent, 'Result · Lab A');
-assert.equal(view.card()('.naome-card-summary').textContent, 'Short summary');
-assert.equal(view.card()('button').textContent, 'Show details');
+assert.equal(view.card()('.naome-card-preview').textContent, 'Short summary');
+assert.equal(view.card()('button').textContent, 'more');
 assert.deepEqual(details(view.card()), {});
 assert.equal(view.messages.at(-1).params.height, 75);
 const beforeResize = view.messages.length;
 view.resize();
 assert.equal(view.messages.length, beforeResize);
 view.click();
-assert.equal(view.card()('button').textContent, 'Hide details');
+assert.equal(view.card()('button').textContent, 'less');
 assert.equal(view.card()('button').attributes['aria-expanded'], 'true');
 assert.deepEqual(details(view.card()), { Summary: 'Full summary', Sources: '<img src=x>',
   'Linked records': linked, 'Record ID': record });
 assert.equal(view.messages.at(-1).params.height, 180);
 
 view.deliver({ method: 'ui/notifications/host-context-changed', params: { locale: 'de-DE' } });
-assert.equal(view.card()('button').textContent, 'Details ausblenden');
+assert.equal(view.card()('button').textContent, 'weniger');
 assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A');
 assert.equal(details(view.card()).Quellen, '<img src=x>');
 view.receive({ ...written, structuredContent: { ...written.structuredContent, record_id: linked } });
@@ -130,12 +130,12 @@ view.receive(recent);
 const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(captured));
 assert.equal(view.card()('h2').textContent, 'Latest result');
 assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A · ' + date);
-assert.equal(view.card()('.naome-card-summary').textContent, 'Saved summary preview');
+assert.equal(view.card()('.naome-card-preview').textContent, 'Saved summary preview');
 view.click();
 assert.equal(details(view.card()).Zusammenfassung, 'The full saved summary');
-assert.equal(view.card()('.naome-card-summary').hidden, true);
+assert.equal(view.card()('.naome-card-preview').hidden, true);
 view.click();
-assert.equal(view.card()('.naome-card-summary').hidden, false);
+assert.equal(view.card()('.naome-card-preview').hidden, false);
 assert.equal(view.card(1)('h2').textContent, 'Earlier method');
 assert.notEqual(view.card()('button').attributes['aria-controls'], view.card(1)('button').attributes['aria-controls']);
 view.click(1);
@@ -144,6 +144,15 @@ assert.deepEqual(details(view.card()), {});
 view.click(1);
 assert.deepEqual(details(view.card(1)), {});
 assert.equal(view.notice.hidden, true);
+
+view.receive({ structuredContent: { ...recent.structuredContent, lab: 'default' } });
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · ' + date);
+assert.equal(view.card()('button').textContent, 'mehr');
+view.click();
+assert.deepEqual(details(view.card()), { Zusammenfassung: 'Saved summary preview', Projekt: 'calibration',
+  Labor: 'default', 'Eintrags-ID': record });
+assert.equal(view.card()('.naome-card-preview').hidden, true);
+
 view.deliver({ method: 'ui/notifications/host-context-changed', params: {
   theme: 'light', styles: { variables: { '--color-text-primary': '#123456',
     '--color-border-secondary': 'url(bad)', '--unknown': '#000000' } },
@@ -157,7 +166,7 @@ const replay = widget();
 replay.receive(searched);
 assert.equal(replay.card()('h2').textContent, 'Matched result');
 assert.equal(replay.card()('.naome-card-context').textContent, 'Derivation · Lab A');
-assert.equal(replay.card()('.naome-card-summary').textContent, 'A matched excerpt from the approved snapshot.');
+assert.equal(replay.card()('.naome-card-preview').textContent, 'A matched excerpt from the approved snapshot.');
 assert.equal(replay.card(1)('h2').textContent, 'Research record');
 assert.equal(replay.notice.hidden, false);
 replay.click();
