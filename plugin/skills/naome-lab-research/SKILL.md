@@ -1,6 +1,6 @@
 ---
 name: naome-lab-research
-description: Design experiments, test hypotheses, compare prototypes or benchmarks, and investigate unexpected research results. Record the evidence and limitations in the selected Naome lab. Also create Naome projects on request.
+description: Design experiments, test hypotheses, compare studies, prototypes or benchmarks, and investigate conflicting findings. Record the evidence and limitations in the selected Naome lab. Also create Naome projects on request.
 ---
 
 # Naome research workflow
@@ -13,7 +13,7 @@ Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it o
 
 ## Record material research milestones
 
-- At the start of substantive research, record the question and any material hypothesis and method already known. For an experiment, capture the inputs, comparison, and the observation that would change the conclusion before running it.
+- At the start of substantive research, record the question and planned method in separate entries. Record a hypothesis when applicable. For an experiment, capture the inputs, comparison, and the observation that would change the conclusion before running it.
 - Use `record_research` when an observation, method change, finding, or limitation affects the research. The hooks already capture supported tool and turn events. Cite their receipt IDs, pinned revisions and file paths, observed URLs, or supplied record IDs as evidence for a new research entry.
 - Describe what was directly observed and what you infer from it. State the tested scope and identify missing evidence that limits the conclusion. Use `correction` for a revision to an archived finding and include the original record in `linked_records`.
 - Keep manual entries concise. Routine commands and repeated status checks need no extra research entry. Include only material authorized for this project and omit credentials, private transcripts, and raw tool output.

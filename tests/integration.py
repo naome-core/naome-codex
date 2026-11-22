@@ -110,6 +110,7 @@ def main():
         ):
             context = hook("UserPromptSubmit", work, session, prompt=prompt)["hookSpecificOutput"]["additionalContext"]
             assert "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill." in context
+            assert "use record_research for separate question and method entries" in context
             assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
             assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
 

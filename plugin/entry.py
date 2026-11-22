@@ -110,8 +110,9 @@ def context_output(binding, progress):
     context = (
         f"Naome selected lab {binding['lab_name']} for this turn. {association} "
         "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill. "
-        "Use record_research for the question, relevant hypotheses and method before substantive work, "
-        "and for supported findings and material limitations afterward. "
+        "Before substantive analysis or experiments, use record_research for separate question and method entries, "
+        "and for any relevant hypothesis. Afterward record supported results and material limitations with evidence. "
+        "Check the write result and report unresolved archive failures. "
         "For routine edits, maintenance and status checks, rely on automatic hook capture unless the user asks for a research record. "
         f"Use binding_token {binding['token']} only for this turn. "
         f"Keep the token out of research records and chat replies. "
