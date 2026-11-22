@@ -125,11 +125,13 @@ class Bridge:
             raise DeliveryError("NAOME returned an unreadable response.") from error
         return lines if args[:2] == ("research", "stream") else (lines[0] if lines else None)
 
-    def lab_allowed(self, binding):
+    def configured_lab(self, binding):
         project = self.projects.get(binding["project"])
-        return project is not None and any(
-            lab["path"] == binding["lab"] for lab in configured_labs(project)[0].values()
-        )
+        if project is not None:
+            return next((lab for lab in configured_labs(project)[0].values() if lab["path"] == binding["lab"]), None)
+
+    def lab_allowed(self, binding):
+        return self.configured_lab(binding) is not None
 
     @staticmethod
     def route(db, where, parameters):
@@ -298,9 +300,11 @@ class Bridge:
             document["fields"]["naome_job"] = row["job"]
         return document
 
-    def status(self, binding, offset=None):
+    def status(self, binding, offset=None, *, include_chat=False):
         session = binding["session"]
         with self.open() as db:
+            if include_chat:
+                db.execute("BEGIN")
             local, reports = db.execute(
                 "SELECT count(CASE WHEN record IS NULL THEN 1 END), "
                 "count(CASE WHEN job IS NOT NULL AND head IS NULL THEN 1 END) "
@@ -311,8 +315,13 @@ class Bridge:
                 "AND (? IS NULL OR offset=?) ORDER BY offset DESC LIMIT 1",
                 (session, offset, offset),
             ).fetchone()
-        return {"pending_local": local, "pending_reports": reports,
-                "local_record": record[0] if record else None}
+            progress = {"pending_local": local, "pending_reports": reports,
+                        "local_record": record[0] if record else None}
+            if include_chat:
+                destinations = self.pending_destinations(db, binding)
+                progress["chat_pending_local"] = sum(row["pending_local"] for row in destinations)
+                progress["chat_pending_reports"] = sum(row["pending_reports"] for row in destinations)
+        return progress
 
     def archive(self, binding, offset=None, budget=2):
         """Deposit evidence locally even when there is no assigned job."""
@@ -351,20 +360,23 @@ class Bridge:
                            (record, session, row["offset"]))
         return {**self.status(binding, offset), **retry}
 
-    def pending_destinations(self, binding):
+    @staticmethod
+    def pending_destinations(db, binding):
         session = binding["codex_session"]
-        with self.open() as db:
-            destinations = db.execute(
-                "SELECT DISTINCT b.session, b.project, b.lab FROM binding b JOIN entry e USING(session) "
-                "WHERE b.project=? AND (e.record IS NULL OR (e.job IS NOT NULL AND e.head IS NULL)) "
-                "AND b.session IN (SELECT destination FROM turn_route WHERE session=? UNION SELECT ?) "
-                "ORDER BY b.session", (binding["project"], session, session),
-            ).fetchall()
-        return [row for row in destinations if self.lab_allowed(row)]
+        return db.execute(
+            "SELECT b.session, b.project, b.lab, "
+            "count(CASE WHEN e.record IS NULL THEN 1 END) AS pending_local, "
+            "count(CASE WHEN e.job IS NOT NULL AND e.head IS NULL THEN 1 END) AS pending_reports "
+            "FROM binding b JOIN entry e USING(session) "
+            "WHERE b.project=? AND (e.record IS NULL OR (e.job IS NOT NULL AND e.head IS NULL)) "
+            "AND b.session IN (SELECT destination FROM turn_route WHERE session=? UNION SELECT ?) "
+            "GROUP BY b.session, b.project, b.lab ORDER BY b.session", (binding["project"], session, session),
+        ).fetchall()
 
     def flush(self, binding):
         """Retry this chat's accepted records using their original lab and assignment."""
-        destinations = self.pending_destinations(binding)
+        with self.open() as db:
+            destinations = [row for row in self.pending_destinations(db, binding) if self.lab_allowed(row)]
         destinations.sort(key=lambda row: row["session"] != binding["session"])
         deadline = time.monotonic() + 2
         progress = {}
@@ -376,14 +388,14 @@ class Bridge:
             if "local_retry" in local:
                 progress["local_retry"] = local["local_retry"]
         if not destinations:
-            return self.status(binding)
+            return self.status(binding, include_chat=True)
 
         lock = self.state.with_suffix(".delivery.lock")
         with lock.open("a") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                return {**self.status(binding), **progress, "report_retry": "Delivery is in progress."}
+                return {**self.status(binding, include_chat=True), **progress, "report_retry": "Delivery is in progress."}
             deadline = time.monotonic() + 5
             for destination in destinations:
                 with self.open() as db:
@@ -393,13 +405,13 @@ class Bridge:
                     ).fetchall()
                 for (job,) in jobs:
                     if time.monotonic() >= deadline:
-                        return {**self.status(binding), **progress, "report_retry": "Delivery budget expired."}
+                        return {**self.status(binding, include_chat=True), **progress, "report_retry": "Delivery budget expired."}
                     try:
                         self.require_lab(destination["lab"])
                         progress.update(self.deliver(destination["lab"], job, destination["session"], deadline))
                     except DeliveryError as error:
                         progress["report_retry"] = str(error)
-        return {**self.status(binding), **progress}
+        return {**self.status(binding, include_chat=True), **progress}
 
     def deliver(self, lab, job, session, deadline):
         with self.open() as db:

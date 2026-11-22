@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naome research block</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; }
+  __NAOME_CARD_STYLES__
+</style>
+</head>
+<body>
+<article id="card" class="naome-card" aria-labelledby="heading" hidden>
+  <div class="naome-card-top">
+    <header class="naome-card-header">
+      <img class="naome-card-logo" src="__NAOME_CARD_LOGO__" alt="" width="18" height="18">
+      <div>
+        <h2 id="heading"></h2>
+        <p id="labels" class="naome-card-context"></p>
+      </div>
+    </header>
+    <button id="toggle" class="naome-card-toggle" type="button" aria-expanded="false" aria-controls="details">Show details</button>
+  </div>
+  <p id="preview" class="naome-card-summary"></p>
+  <dl id="details" class="naome-card-fields" aria-label="Research block details" hidden>
+    <div><dt id="summary-label">Summary</dt><dd id="summary"></dd></div>
+    <div id="sources-field" hidden><dt id="sources-label">Sources</dt><dd><ul id="sources"></ul></dd></div>
+    <div id="linked-field" hidden><dt id="linked-label">Linked records</dt><dd><ul id="linked"></ul></dd></div>
+    <div><dt id="record-label">Record ID</dt><dd><code id="record"></code></dd></div>
+  </dl>
+</article>
+<script>
+  (() => {
+    const byId = (id) => document.getElementById(id);
+    const card = byId('card');
+    const button = byId('toggle');
+    const details = byId('details');
+    const translations = {
+      en: {
+        title: 'Naome research block', details: 'Research block details',
+        show: 'Show details', hide: 'Hide details',
+        fields: { summary: 'Summary', sources: 'Sources', linked: 'Linked records', record: 'Record ID' },
+        categories: { question: 'Question', hypothesis: 'Hypothesis', method: 'Method',
+          observation: 'Observation', result: 'Result', limitation: 'Limitation', correction: 'Correction' }
+      },
+      de: {
+        title: 'Naome-Forschungsblock', details: 'Details zum Forschungsblock',
+        show: 'Details anzeigen', hide: 'Details ausblenden',
+        fields: { summary: 'Zusammenfassung', sources: 'Quellen', linked: 'Verknüpfte Einträge', record: 'Eintrags-ID' },
+        categories: { question: 'Frage', hypothesis: 'Hypothese', method: 'Methode',
+          observation: 'Beobachtung', result: 'Ergebnis', limitation: 'Einschränkung', correction: 'Korrektur' }
+      }
+    };
+    let labels = translations.en;
+    let ready = false;
+    let block;
+    let display;
+    let lastHeight;
+    const send = (message) => window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
+    const reportSize = () => {
+      const height = Math.ceil(document.body.getBoundingClientRect().height);
+      if (!ready || height === lastHeight) return;
+      lastHeight = height;
+      send({ method: 'ui/notifications/size-changed', params: { height } });
+    };
+
+    function fillList(id, values) {
+      byId(`${id}-field`).hidden = values.length === 0;
+      byId(id).replaceChildren(...values.map((value) => {
+        const row = document.createElement('li');
+        row.textContent = value;
+        return row;
+      }));
+    }
+
+    function updateLabels() {
+      button.textContent = details.hidden ? labels.show : labels.hide;
+      if (display) {
+        const category = Object.hasOwn(labels.categories, display.category)
+          ? labels.categories[display.category] : display.category;
+        byId('labels').textContent = `${category} · Lab ${display.lab}`;
+      }
+    }
+
+    function applyHostContext({ locale, theme } = {}) {
+      if (typeof locale === 'string') {
+        const language = /^de(?:-|$)/i.test(locale) ? 'de' : 'en';
+        labels = translations[language];
+        document.documentElement.lang = language;
+        document.title = labels.title;
+        details.setAttribute('aria-label', labels.details);
+        for (const [field, label] of Object.entries(labels.fields)) {
+          byId(`${field}-label`).textContent = label;
+        }
+        updateLabels();
+      }
+      if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
+    }
+
+    function expand(open) {
+      details.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+      updateLabels();
+      byId('summary').textContent = open ? block.summary : '';
+      fillList('sources', open ? block.sources : []);
+      fillList('linked', open ? block.linked_records : []);
+      byId('record').textContent = open ? block.record_id : '';
+      reportSize();
+    }
+
+    function showResult(result) {
+      const summary = result?.structuredContent;
+      const full = result?._meta?.['naome/research-block'];
+      const isTextList = (values) => Array.isArray(values) && values.every(value => typeof value === 'string');
+      const valid = !result?.isError && typeof summary?.record_id === 'string' && summary.record_id &&
+        [summary.title, summary.lab, summary.category, summary.summary].every(value => typeof value === 'string') &&
+        full?.record_id === summary.record_id && typeof full.summary === 'string' &&
+        isTextList(full.sources) && isTextList(full.linked_records);
+      block = valid ? full : undefined;
+      display = valid ? summary : undefined;
+      byId('heading').textContent = display?.title ?? '';
+      byId('labels').textContent = '';
+      byId('preview').textContent = display?.summary ?? '';
+      card.hidden = !valid;
+      expand(false);
+    }
+
+    button.addEventListener('click', () => {
+      if (block) expand(details.hidden);
+    });
+
+    window.addEventListener('message', ({ source, data }) => {
+      if (source !== window.parent || data?.jsonrpc !== '2.0') return;
+      if (!ready && data.id === 1 && data.result) {
+        applyHostContext(data.result.hostContext ?? {});
+        ready = true;
+        send({ method: 'ui/notifications/initialized' });
+        reportSize();
+        return;
+      }
+      if (!ready) return;
+      if (data.method === 'ui/notifications/host-context-changed') {
+        applyHostContext(data.params ?? {});
+        reportSize();
+      } else if (data.method === 'ui/notifications/tool-result') {
+        showResult(data.params);
+      } else if (data.method === 'ui/resource-teardown' && data.id !== undefined) {
+        ready = false;
+        showResult();
+        send({ id: data.id, result: {} });
+      }
+    });
+    new ResizeObserver(reportSize).observe(card);
+    send({ id: 1, method: 'ui/initialize', params: {
+      appInfo: { name: 'Naome research block', version: '0.1.0' },
+      appCapabilities: {}, protocolVersion: '2026-01-26'
+    } });
+  })();
+</script>
+</body>
+</html>

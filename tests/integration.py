@@ -1,4 +1,4 @@
-"""Exercise hooks and stdio tools against two actual NAOME Network v0.2.0 nodes."""
+"""Exercise hooks and stdio tools against two nodes from the pinned NAOME Network release."""
 
 import json
 import os
@@ -42,12 +42,17 @@ def listener():
 
 
 def main():
-    assert subprocess.check_output([NAOME, "--version"], text=True).strip() == "naome 0.2.0"
+    release = json.loads(Path(__file__).with_name("naome-release.json").read_text(encoding="utf-8"))
+    expected_version = f"naome {release['network_version']}"
+    installed_version = subprocess.check_output([NAOME, "--version"], text=True).strip()
+    assert installed_version == expected_version, f"Expected {expected_version}, found {installed_version}"
     with tempfile.TemporaryDirectory(prefix="naome-codex-integration-") as scratch:
         temp = Path(scratch)
         hub, lab = temp / "hub", temp / "lab"
         hub_id, lab_id = initialize(hub), initialize(lab)
-        assert cli(hub, "archive", "capabilities")["version"] == "0.1.2"
+        expected_protocol = release["protocol_version"]
+        installed_protocol = cli(hub, "archive", "capabilities")["version"]
+        assert installed_protocol == expected_protocol, f"Expected protocol {expected_protocol}, found {installed_protocol}"
         held1, addr1 = listener()
         held2, addr2 = listener()
         for node, role, own, pid, peer in (
@@ -83,10 +88,13 @@ def main():
             output = subprocess.check_output([sys.executable, ENTRY, "mcp"], input=wire, text=True, env=env)
             return [json.loads(line) for line in output.splitlines()]
 
-        def tool(name, token, **kwargs):
-            row = mcp([{"id": 5, "method": "tools/call", "params": {
+        def call_tool(name, token, **kwargs):
+            return mcp([{"id": 5, "method": "tools/call", "params": {
                 "name": name, "arguments": {"binding_token": token, **kwargs},
             }}])[0]["result"]
+
+        def tool(name, token, **kwargs):
+            row = call_tool(name, token, **kwargs)
             return row["isError"], row["content"][0]["text"]
 
         def token_for(workspace, session, turn="turn-one"):
@@ -96,12 +104,49 @@ def main():
 
         assert hook("UserPromptSubmit", others, "unrelated", prompt="Continue.") == {}
         assert not (temp / "queue.sqlite").exists()
+        for session, prompt in (
+            ("performance-research", "Test the hypothesis that the new implementation uses less memory."),
+            ("expression-research", "Investigate why two analyses of public gene expression data disagree."),
+            ("clinical-research", "Compare the primary endpoints of two published clinical trials."),
+            ("expression-edit", "Fix the misspelled expression unit in a figure caption."),
+            ("clinical-edit", "Alphabetize the clinical trial citations without changing their content."),
+        ):
+            context = hook("UserPromptSubmit", work, session, prompt=prompt)["hookSpecificOutput"]["additionalContext"]
+            assert "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill." in context
+            assert "use record_research for separate question and method entries" in context
+            assert "Follow the user and workspace instructions for permission to record and send evidence." in context
+            assert "Use delivery=local unless assignment delivery is authorized." in context
+            assert "If recording is restricted or an approval is denied, continue the allowed work" in context
+            assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
+            assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
+
+        uri = "ui://naome/research-card-v1.html"
         responses = mcp([{"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
-                         {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"}])
+                         {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"},
+                         {"id": 3, "method": "resources/list"},
+                         {"id": 4, "method": "resources/read", "params": {"uri": uri}},
+                         {"id": 5, "method": "resources/read", "params": {"uri": "ui://naome/unknown.html"}},
+                         {"id": 6, "method": "resources/templates/list"}])
         assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
-        assert {item["name"] for item in responses[1]["result"]["tools"]} == {
-            "create_project", "research_status", "record_research", "retry_research_delivery",
+        assert "resources" in responses[0]["result"]["capabilities"]
+        descriptors = {item["name"]: item for item in responses[1]["result"]["tools"]}
+        assert descriptors.keys() == {
+            "create_project", "research_status", "search_research", "record_research", "retry_research_delivery",
         }
+        assert descriptors["search_research"]["annotations"]["readOnlyHint"] is True
+        assert descriptors["record_research"]["annotations"]["readOnlyHint"] is False
+        assert descriptors["record_research"]["inputSchema"]["properties"]["delivery"]["default"] == "assigned"
+        assert {name: item["_meta"] for name, item in descriptors.items() if "_meta" in item} == {
+            "record_research": {"ui": {"resourceUri": uri}, "openai/ui": {"preferredModelDisplayMode": "inline"}},
+        }
+        mime = "text/html;profile=mcp-app"
+        assert responses[2]["result"]["resources"] == [{"uri": uri, "name": "Naome research block", "mimeType": mime}]
+        resource, = responses[3]["result"]["contents"]
+        assert resource["uri"] == uri and resource["mimeType"] == mime
+        assert "data:image/png;base64," in resource["text"] and "__NAOME_CARD_" not in resource["text"]
+        assert "ui/initialize" in resource["text"]
+        assert responses[4]["error"]["code"] == -32002
+        assert responses[5]["result"] == {"resourceTemplates": []}
 
         def show_local(node, identifier):
             snapshot = cli(node, "archive", "snapshot", "Integration local readback",
@@ -115,21 +160,47 @@ def main():
         assert not cli(hub, "status")["running"] and not cli(lab, "status")["running"]
         token = token_for(work, "repository-session", "offline-capture")
         assert json.loads(tool("research_status", token)[1])["job"] is None
-        error, response = tool("record_research", token, category="hypothesis",
-                               title="Offline hypothesis", summary="The archive is available locally.",
-                               sources=[])
-        status = json.loads(response)
-        assert not error and status["job"] is None
+        hypothesis = call_tool("record_research", token, category="hypothesis",
+                               title="Offline hypothesis", summary="The archive is available locally.", sources=[])
+        status = json.loads(hypothesis["content"][0]["text"])
+        assert not hypothesis["isError"] and status["job"] is None
         assert status["pending_local"] == status["pending_reports"] == 0
-        offline = show_local(lab, status["local_record"])
+        origin = status["local_record"]
+        offline = show_local(lab, origin)
         assert offline["subject"] == "Offline hypothesis" and "naome_job" not in offline["fields"]
+        assert hypothesis["structuredContent"]["record_id"] == origin
+
+        summary = "The recovered archive contained the record and its references. " * 4
+        sources = ["Synthetic fixture: <sample label>", "Synthetic fixture: archive readback"]
+        recorded = call_tool("record_research", token, category="result", title="  Offline readback  ",
+                             summary=summary, sources=sources, linked_records=[origin, origin])
+        assert not recorded["isError"]
+        record = json.loads(recorded["content"][0]["text"])["local_record"]
+        card = recorded["structuredContent"]
+        assert card["record_id"] == record
+        assert (card["title"], card["category"], card["lab"]) == ("Offline readback", "result", "default")
+        assert len(card["summary"]) <= 160 and card["summary"].endswith("…")
+        assert recorded["_meta"] == {"naome/research-block": {
+            "record_id": record, "summary": summary.strip(), "sources": sources, "linked_records": [origin],
+        }}
+        assert token not in json.dumps(recorded) and sources[0] not in json.dumps(card)
+        archived = show_local(lab, record)
+        assert archived["subject"] == card["title"]
+        assert archived["fields"]["summary"] == summary.strip() and archived["fields"]["sources"] == sources
+        assert [(entry["role"], entry["target"]) for entry in archived["inputs"]] == [("references", origin)]
+
         config.write_text(json.dumps({"naome": str(temp / "unavailable"), "projects": projects}))
-        error, response = tool("record_research", token, category="method",
-                               title="Deferred locally", summary="Repeat the readback.", sources=[])
-        status = json.loads(response)
-        assert not error and status["pending_local"] == 1 and status["local_record"] is None
+        queued = call_tool("record_research", token, category="method",
+                           title="Deferred locally", summary="Repeat the readback.", sources=[])
+        status = json.loads(queued["content"][0]["text"])
+        assert not queued["isError"] and status["pending_local"] == 1 and status["local_record"] is None
+        assert "structuredContent" not in queued and "_meta" not in queued
         config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
+        expired = token
         token = token_for(work, "repository-session", "offline-retry")
+        rejected = call_tool("record_research", expired, category="method",
+                             title="Expired", summary="A previous turn cannot write.", sources=[])
+        assert rejected["isError"] and "structuredContent" not in rejected and "_meta" not in rejected
         recovered = json.loads(tool("research_status", token)[1])
         assert recovered["pending_local"] == recovered["pending_reports"] == 0
         assert show_local(lab, recovered["local_record"])["subject"] == "Deferred locally"
@@ -188,9 +259,18 @@ def main():
 
             assert tool("record_research", token, category="result", title="Missing source",
                         summary="This result has no evidence.", sources=[])[0]
-            failed, result = tool("record_research", token, category="result", title="Operation completed",
-                                  summary="The observed command returned zero.", sources=["tool:turn-one:call-one"])
-            assert not failed and json.loads(result)["pending_reports"] == 0
+            operation = {"category": "result", "title": "Operation completed",
+                         "summary": "The observed command returned zero.", "sources": ["tool:turn-one:call-one"]}
+            failed, result = tool("record_research", token, **operation)
+            assigned = json.loads(result)
+            assert not failed and assigned["pending_reports"] == 0 and assigned["job"] == repository_job
+            failed, result = tool("record_research", token, delivery="local", **operation)
+            local_only = json.loads(result)
+            assert not failed and local_only["pending_reports"] == 0 and local_only["job"] is None
+            assert local_only["local_record"] and local_only["local_record"] != assigned["local_record"]
+            assert "naome_job" not in show_local(lab, local_only["local_record"])["fields"]
+            assert json.loads(tool("record_research", token, delivery="local", **operation)[1]) == local_only
+            assert tool("record_research", token, delivery="unrecognized", **operation)[0]
             assert hook("Stop", work, "repository-session", turn_id="turn-two") == {}
             assert not tool("record_research", desk_token, category="result", title="Source comparison",
                             summary="The supplied documents describe different populations.",
@@ -211,6 +291,7 @@ def main():
             for row in delivered:
                 head = row["head"]
                 discovered = cli(hub, "archive", "discover", head, "--budget", "100")
+                assert local_only["local_record"] not in discovered["ids"]
                 docs = [cli(hub, "archive", "show", head, item) for item in discovered["ids"]]
                 assert len(docs) == 1 and docs[0]["fields"]["naome_job"] == row["job"]
                 assert "private text" not in json.dumps(docs) and "private output" not in json.dumps(docs)

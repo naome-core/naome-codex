@@ -88,6 +88,14 @@ def main():
 
             assert not cli(lab, "stop")["running"]
             assert not cli(orchestrator, "stop")["running"]
+            orchestrator_config = orchestrator / "node.json"
+            original_config = orchestrator_config.read_text()
+            orchestrator_config.write_text(json.dumps({**json.loads(original_config), "peers": []}))
+            failed = tool("create_project", project="network-study", mode="network", error=True)
+            assert "does not match the registered lab and orchestrator peers" in failed
+            assert all(not cli(node, "status")["running"] for node in running)
+            orchestrator_config.write_text(original_config)
+
             current = json.loads(config.read_text())
             wrapper = temp / "fail-lab-start"
             wrapper.write_text(
