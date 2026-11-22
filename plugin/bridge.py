@@ -51,8 +51,9 @@ def git_common_dir(directory):
 
 class Bridge:
     def __init__(self):
-        config = Path(os.environ.get("NAOME_CODEX_CONFIG", str(SUPPORT / "config.json")))
-        self.config = json.loads(config.read_text()) if config.is_file() else {}
+        self.config_path = Path(os.environ.get("NAOME_CODEX_CONFIG", str(SUPPORT / "config.json"))).resolve()
+        self.config_bytes = self.config_path.read_bytes() if self.config_path.is_file() else None
+        self.config = json.loads(self.config_bytes) if self.config_bytes is not None else {}
         self.state = Path(os.environ.get("NAOME_CODEX_STATE", str(SUPPORT / "journal.sqlite")))
         self.projects = self.config.get("projects", {})
         self.naome = Path(self.config.get("naome", str(Path.home() / ".cargo/bin/naome")))

@@ -100,7 +100,7 @@ def main():
                          {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"}])
         assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
         assert {item["name"] for item in responses[1]["result"]["tools"]} == {
-            "research_status", "record_research", "retry_research_delivery",
+            "create_project", "research_status", "record_research", "retry_research_delivery",
         }
 
         def show_local(node, identifier):

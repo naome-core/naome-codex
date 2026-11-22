@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
+from project import PROJECT, create_project
 
 ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired)
 INPUT_LIMIT = 8 * 1024 * 1024
@@ -27,6 +28,14 @@ def tool(name, description, properties, required):
 
 
 TOOLS = [
+    tool("create_project", "Create and enroll a new local research workspace at the user's request. "
+         "The default creates an offline lab archive. Network mode starts a dedicated lab and orchestrator "
+         "on this computer and verifies their connection. Available before the workspace is enrolled.",
+         {
+             "project": {"type": "string", "pattern": f"^{PROJECT}$",
+                         "description": "A short lowercase name for the new project and its folder."},
+             "mode": {"type": "string", "enum": ["local", "network"], "default": "local"},
+         }, ["project"]),
     tool("research_status", "Show the local archive status and any assigned laboratory job.",
          TOKENS, ["binding_token"]),
     tool("record_research", "Record a structured research step using evidence this turn actually observed.",
@@ -52,6 +61,8 @@ def do_tool(name, arguments):
     if not isinstance(arguments, dict):
         raise ValueError("Tool arguments must be an object.")
     bridge = Bridge()
+    if name == "create_project":
+        return create_project(bridge, arguments)
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
         raise ValueError("The active Codex turn has no valid Naome lab token.")

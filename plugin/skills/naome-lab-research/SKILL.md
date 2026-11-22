@@ -1,7 +1,9 @@
 ---
 name: naome-lab-research
-description: Record research in the enrolled local NAOME lab, including hypotheses, methods, evidence, findings, limitations, and corrections.
+description: Create a local NAOME research project or record questions, methods, evidence, findings, limitations, and corrections in its lab.
 ---
+
+When the user explicitly asks to create a new Naome project, call `create_project` with the requested project name. Use its default `local` mode for an offline lab. Use `network` only if the user asks for an independent lab and orchestrator network. Creation can run before the workspace is enrolled and takes no binding token. Report the workspace returned by the tool and the verified network state, if requested.
 
 Use this workflow when the Naome `UserPromptSubmit` hook supplies a binding token. Use only the current turn's token and only in Naome MCP tool arguments. The hook fixes the lab for the turn. If no lab was selected and the user asks to record evidence, ask which configured lab to use.
 

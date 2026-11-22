@@ -1,6 +1,15 @@
 # NAOME Codex
 
-NAOME Codex records work in the local NAOME lab archive. It uses the released `naome` CLI and Python 3.9 or later on macOS. The pilot is tested with NAOME Network v0.2.0 and REP v0.1.2.
+NAOME Codex creates research projects and records work in their local NAOME lab archives. It uses the released `naome` CLI and Python 3.9 or later on macOS. The pilot is tested with NAOME Network v0.2.0 and REP v0.1.2.
+
+## Create a project
+
+Ask Naome to create a project with a short name such as `calibration-study`. The `create_project` tool creates a fresh workspace under `~/Documents/NAOME Projects` and a lab directory under `~/Library/Application Support/NAOME Network/Projects`. It enrolls the workspace in the plugin configuration. You can then open the returned workspace in Codex and record evidence with trusted hooks.
+
+- The default **local** mode initializes an offline archive and leaves the node stopped. The lab can record evidence without network connectivity or a research assignment.
+- The optional **network** mode creates a dedicated lab and orchestrator with separate archives and peer identities. Both nodes run on the same computer and listen on loopback. Naome waits until they report a connection to each other. Afterward the orchestrator can assign work and receive evidence from its lab.
+
+The tool needs a working `naome` binary and no lab token. It preserves existing projects and refuses to take over an existing workspace or node directory. Repeating the same managed project name and mode returns its existing workspace, and restarts or checks the dedicated nodes in network mode. If network startup fails after enrollment, repeat the same request to retry the setup. The optional `provisioning.workspace_root` and `provisioning.node_root` settings in the plugin configuration override the parent directories for new projects.
 
 ## Use in Codex
 
@@ -65,6 +74,7 @@ Run the integration test with the tested `naome` release in `~/.cargo/bin/naome`
 ```sh
 python3 tests/integration.py
 python3 tests/turn_routing.py
+python3 tests/project_setup.py
 ```
 
-The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal.
+The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries.

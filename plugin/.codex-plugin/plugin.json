@@ -1,7 +1,7 @@
 {
   "name": "naome-codex",
-  "version": "0.1.6",
-  "description": "Record research from an enrolled Codex workspace in a local NAOME lab.",
+  "version": "0.1.7",
+  "description": "Create NAOME research projects and record evidence from enrolled Codex workspaces.",
   "license": "MIT",
   "skills": "./skills",
   "hooks": "./hooks/hooks.json",
@@ -9,8 +9,8 @@
   "requires_local_executor": true,
   "interface": {
     "displayName": "Naome",
-    "shortDescription": "Record lab research",
-    "longDescription": "Capture research in a local NAOME lab archive and report assigned evidence to an orchestrator.",
+    "shortDescription": "Create projects and record lab research",
+    "longDescription": "Create a local research project, optionally with a dedicated network. Archive evidence in its lab and report assigned work to its orchestrator.",
     "developerName": "NAOME",
     "category": "Productivity",
     "capabilities": [
