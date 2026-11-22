@@ -118,35 +118,46 @@ def main():
             assert "Use delivery=local unless assignment delivery is authorized." in context
             assert "If recording is restricted or an approval is denied, continue the allowed work" in context
             assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
+            assert "Use list_recent_research for the latest research records" in context
+            assert "use the displayed research card as the answer" in context
             assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
 
-        uri = "ui://naome/research-card-v1.html"
+        uri = "ui://naome/research-card-v2.html"
+        legacy_uri = "ui://naome/research-card-v1.html"
         responses = mcp([{"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
                          {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"},
                          {"id": 3, "method": "resources/list"},
                          {"id": 4, "method": "resources/read", "params": {"uri": uri}},
                          {"id": 5, "method": "resources/read", "params": {"uri": "ui://naome/unknown.html"}},
-                         {"id": 6, "method": "resources/templates/list"}])
+                         {"id": 6, "method": "resources/templates/list"},
+                         {"id": 7, "method": "resources/read", "params": {"uri": legacy_uri}}])
         assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
         assert "resources" in responses[0]["result"]["capabilities"]
         descriptors = {item["name"]: item for item in responses[1]["result"]["tools"]}
         assert descriptors.keys() == {
-            "create_project", "research_status", "search_research", "record_research", "retry_research_delivery",
+            "create_project", "research_status", "list_recent_research", "search_research",
+            "record_research", "retry_research_delivery",
         }
         assert descriptors["search_research"]["annotations"]["readOnlyHint"] is True
+        assert descriptors["list_recent_research"]["annotations"]["readOnlyHint"] is True
         assert descriptors["record_research"]["annotations"]["readOnlyHint"] is False
         assert descriptors["record_research"]["inputSchema"]["properties"]["delivery"]["default"] == "assigned"
-        assert {name: item["_meta"] for name, item in descriptors.items() if "_meta" in item} == {
-            "record_research": {"ui": {"resourceUri": uri}, "openai/ui": {"preferredModelDisplayMode": "inline"}},
-        }
+        card_tools = {name: item["_meta"] for name, item in descriptors.items() if "_meta" in item}
+        assert card_tools.keys() == {"record_research", "list_recent_research", "search_research"}
+        assert all(meta == {"ui": {"resourceUri": uri}, "openai/ui": {"preferredModelDisplayMode": "inline"}}
+                   for meta in card_tools.values())
         mime = "text/html;profile=mcp-app"
         assert responses[2]["result"]["resources"] == [{"uri": uri, "name": "Naome research block", "mimeType": mime}]
         resource, = responses[3]["result"]["contents"]
         assert resource["uri"] == uri and resource["mimeType"] == mime
+        assert resource["_meta"]["openai/widgetShowCodexWidgetInline"] is True
+        assert resource["_meta"]["openai/widgetMinFrameHeight"] == 0
+        assert resource["_meta"]["openai/widgetHeightHint"] == 104
         assert "data:image/png;base64," in resource["text"] and "__NAOME_CARD_" not in resource["text"]
         assert "ui/initialize" in resource["text"]
         assert responses[4]["error"]["code"] == -32002
         assert responses[5]["result"] == {"resourceTemplates": []}
+        assert responses[6]["result"]["contents"] == [{**resource, "uri": legacy_uri}]
 
         def show_local(node, identifier):
             snapshot = cli(node, "archive", "snapshot", "Integration local readback",
@@ -160,6 +171,10 @@ def main():
         assert not cli(hub, "status")["running"] and not cli(lab, "status")["running"]
         token = token_for(work, "repository-session", "offline-capture")
         assert json.loads(tool("research_status", token)[1])["job"] is None
+        empty = call_tool("list_recent_research", token)
+        assert json.loads(empty["content"][0]["text"])["records"] == []
+        assert "structuredContent" not in empty
+        assert tool("search_research", token, query="calibration")[0]
         hypothesis = call_tool("record_research", token, category="hypothesis",
                                title="Offline hypothesis", summary="The archive is available locally.", sources=[])
         status = json.loads(hypothesis["content"][0]["text"])
@@ -189,21 +204,46 @@ def main():
         assert archived["fields"]["summary"] == summary.strip() and archived["fields"]["sources"] == sources
         assert [(entry["role"], entry["target"]) for entry in archived["inputs"]] == [("references", origin)]
 
+        # A newer receipt in a different project must stay separate even on a shared lab.
+        other_token = token_for(desk, "other-project-receipts")
+        other = call_tool("record_research", other_token, category="hypothesis",
+                          title="Other project's receipt", summary="This lab is shared by two projects.", sources=[])
+        assert not other["isError"] and other["structuredContent"]["record_id"] != record
+        assert hook("Stop", work, "repository-session", turn_id="offline-capture") == {}
+        reader = token_for(work, "reader-session")
+
         config.write_text(json.dumps({"naome": str(temp / "unavailable"), "projects": projects}))
         queued = call_tool("record_research", token, category="method",
                            title="Deferred locally", summary="Repeat the readback.", sources=[])
         status = json.loads(queued["content"][0]["text"])
         assert not queued["isError"] and status["pending_local"] == 1 and status["local_record"] is None
         assert "structuredContent" not in queued and "_meta" not in queued
+        recent_result = call_tool("list_recent_research", reader, limit=10)
+        assert not recent_result["isError"], recent_result
+        recent = json.loads(recent_result["content"][0]["text"])
+        assert recent_result["structuredContent"] == recent and "_meta" not in recent_result
+        assert (recent["project"], recent["lab"], recent["source"]) == (
+            "repo-research", "default", "codex_archive_receipts")
+        assert [item["record_id"] for item in recent["records"]] == [record, origin]
+        assert recent["records"][0] == {
+            "record_id": record, "title": "Offline readback", "category": "result",
+            "captured_at": archived["fields"]["captured_at"],
+        }
+        assert json.loads(tool("list_recent_research", reader)[1])["records"] == recent["records"][:1]
+        assert tool("list_recent_research", reader, limit=True)[0]
+        assert tool("list_recent_research", reader, lab="other")[0]
         config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
         expired = token
         token = token_for(work, "repository-session", "offline-retry")
         rejected = call_tool("record_research", expired, category="method",
                              title="Expired", summary="A previous turn cannot write.", sources=[])
         assert rejected["isError"] and "structuredContent" not in rejected and "_meta" not in rejected
+        assert tool("list_recent_research", expired)[0]
         recovered = json.loads(tool("research_status", token)[1])
         assert recovered["pending_local"] == recovered["pending_reports"] == 0
         assert show_local(lab, recovered["local_record"])["subject"] == "Deferred locally"
+        assert json.loads(tool("list_recent_research", reader)[1])["records"][0]["record_id"] == (
+            recovered["local_record"])
         lab_config_path.write_text(json.dumps(lab_config))
 
         started = []

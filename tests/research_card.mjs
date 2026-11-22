@@ -4,33 +4,67 @@ import { runInNewContext } from 'node:vm';
 
 const html = readFileSync(new URL('../plugin/assets/research-card.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]+)<\/script>/)[1];
-const record = `1:0:${'a'.repeat(64)}`;
-const linked = `1:0:${'b'.repeat(64)}`;
-const result = {
+const id = (character) => '1:0:' + character.repeat(64);
+const record = id('a');
+const linked = id('b');
+const head = id('c');
+const captured = '2026-11-22T15:24:55Z';
+const written = {
   structuredContent: { record_id: record, title: 'Synthetic result', category: 'result',
     lab: 'A', summary: 'Short summary' },
   _meta: { 'naome/research-block': { record_id: record, summary: 'Full summary',
     sources: ['<img src=x>'], linked_records: [linked] } },
 };
+const recent = {
+  structuredContent: { project: 'calibration', lab: 'A', source: 'codex_archive_receipts',
+    records: [{ record_id: record, title: 'Latest result', category: 'result', captured_at: captured },
+      { record_id: linked, title: 'Earlier method', category: 'method' }] },
+};
+const searched = {
+  structuredContent: { project: 'calibration', lab: 'A', head, query_limited: true,
+    hits: [{ record_id: record, subject: 'Matched result', kind: 'derivation',
+      snippet: 'A matched excerpt from the approved snapshot.',
+      links: [{ role: 'references', target: linked }], location: { pointer: '/fields/summary' } },
+    { record_id: linked, kind: 'plan' }] },
+};
 
-function widget(locale) {
-  const nodes = new Map();
-  const events = new Map();
-  const messages = [];
-  const node = () => ({
-    hidden: true, textContent: '', children: [], attributes: {}, listeners: {},
-    replaceChildren(...children) { this.children = children; },
+function node(tagName, hidden = false) {
+  return {
+    tagName, hidden, children: [], attributes: {}, listeners: {}, text: '',
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); },
+    set textContent(value) { this.text = value; this.children = []; },
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.text = ''; this.children = children; },
     setAttribute(key, value) { this.attributes[key] = value; },
     addEventListener(name, listener) { this.listeners[name] = listener; },
-  });
-  const get = (id) => {
-    if (!nodes.has(id)) nodes.set(id, node());
-    return nodes.get(id);
   };
+}
+
+function cloneCard() {
+  const article = node('article');
+  const parts = {
+    h2: node('h2'), '.naome-card-context': node('p'), button: node('button'),
+    '.naome-card-summary': node('p', true), dl: node('dl', true),
+  };
+  article.querySelector = (selector) => parts[selector];
+  article.append(...Object.values(parts));
+  return article;
+}
+
+function widget(locale) {
+  const records = node('div');
+  const results = node('section', true);
+  const notice = node('p', true);
+  const nodes = { results, records, notice, 'record-template': {
+    content: { firstElementChild: { cloneNode: cloneCard } },
+  } };
+  const events = new Map();
+  const messages = [];
   const parent = { postMessage: (message) => messages.push(message) };
+  results.getBoundingClientRect = () => ({height: results.hidden ? 0 : records.children
+    .reduce((sum, card) => sum + (card.querySelector('dl').hidden ? 75 : 180), notice.hidden ? 0 : 24)});
   let resize;
-  const document = { getElementById: get, createElement: node, documentElement: {style: {}},
-    body: { getBoundingClientRect: () => ({height: get('card').hidden ? 0 : get('details').hidden ? 75 : 180}) } };
+  const document = { getElementById: (id) => nodes[id], createElement: node, documentElement: {style: {}} };
   runInNewContext(script, {
     window: { parent, addEventListener: (name, listener) => events.set(name, listener) },
     document,
@@ -43,64 +77,85 @@ function widget(locale) {
   const receive = (params) => deliver({ method: 'ui/notifications/tool-result', params });
   assert.equal(messages[0].method, 'ui/initialize');
   deliver({ id: 1, result: {} }, {});
-  receive(result);
-  assert.equal(get('card').hidden, true);
+  receive(written);
+  assert.equal(results.hidden, true);
   deliver({ id: 1, result: { hostContext: { locale, theme: 'dark' } } });
   assert.equal(messages[1].method, 'ui/notifications/initialized');
   assert.equal(document.documentElement.style.colorScheme, 'dark');
-  return { get, deliver, receive, resize, messages, click: () => get('toggle').listeners.click() };
+  return { results, records, notice, deliver, receive, resize, messages,
+    card: (index = 0) => records.children[index].querySelector,
+    click: (index = 0) => records.children[index].querySelector('button').listeners.click() };
+}
+
+function details(card) {
+  return Object.fromEntries(card('dl').children.map(({ children: [label, value] }) =>
+    [label.textContent, value.textContent]));
 }
 
 const view = widget('en-GB');
 view.receive({});
-assert.equal(view.get('card').hidden, true);
-view.receive(result);
-assert.equal(view.get('card').hidden, false);
-assert.equal(view.get('heading').textContent, 'Synthetic result');
-assert.equal(view.get('labels').textContent, 'Result · Lab A');
-assert.equal(view.get('preview').textContent, 'Short summary');
-assert.equal(view.get('toggle').textContent, 'Show details');
-assert.equal(view.get('summary').textContent, '');
-assert.equal(view.get('details').hidden, true);
+assert.equal(view.results.hidden, true);
+view.receive(written);
+assert.equal(view.results.hidden, false);
+assert.equal(view.card()('h2').textContent, 'Synthetic result');
+assert.equal(view.card()('.naome-card-context').textContent, 'Result · Lab A');
+assert.equal(view.card()('.naome-card-summary').textContent, 'Short summary');
+assert.equal(view.card()('button').textContent, 'Show details');
+assert.deepEqual(details(view.card()), {});
 assert.equal(view.messages.at(-1).params.height, 75);
 const beforeResize = view.messages.length;
 view.resize();
 assert.equal(view.messages.length, beforeResize);
 view.click();
-assert.equal(view.get('toggle').textContent, 'Hide details');
-assert.equal(view.get('toggle').attributes['aria-expanded'], 'true');
-assert.equal(view.get('details').hidden, false);
-assert.equal(view.get('summary').textContent, 'Full summary');
-assert.equal(view.get('record').textContent, record);
-assert.deepEqual(view.get('sources').children.map(item => item.textContent), ['<img src=x>']);
-assert.deepEqual(view.get('linked').children.map(item => item.textContent), [linked]);
+assert.equal(view.card()('button').textContent, 'Hide details');
+assert.equal(view.card()('button').attributes['aria-expanded'], 'true');
+assert.deepEqual(details(view.card()), { Summary: 'Full summary', Sources: '<img src=x>',
+  'Linked records': linked, 'Record ID': record });
 assert.equal(view.messages.at(-1).params.height, 180);
-view.deliver({ method: 'ui/notifications/host-context-changed', params: { locale: 'de-DE' } });
-assert.equal(view.get('toggle').textContent, 'Details ausblenden');
-assert.equal(view.get('labels').textContent, 'Ergebnis · Lab A');
-assert.equal(view.get('sources-label').textContent, 'Quellen');
-assert.equal(view.get('summary').textContent, 'Full summary');
 
-const mismatched = { ...result, structuredContent: { ...result.structuredContent, record_id: linked } };
-view.receive(mismatched);
-assert.equal(view.get('card').hidden, true);
-assert.equal(view.get('record').textContent, '');
-assert.equal(view.get('sources').children.length, 0);
-assert.equal(view.get('summary').textContent, '');
-assert.equal(view.get('toggle').textContent, 'Details anzeigen');
-view.receive(result);
-view.click();
-view.click();
-assert.equal(view.get('details').hidden, true);
-assert.equal(view.get('record').textContent, '');
-assert.equal(view.messages.some(message => message.method === 'tools/call'), false);
+view.deliver({ method: 'ui/notifications/host-context-changed', params: { locale: 'de-DE' } });
+assert.equal(view.card()('button').textContent, 'Details ausblenden');
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A');
+assert.equal(details(view.card()).Quellen, '<img src=x>');
+view.receive({ ...written, structuredContent: { ...written.structuredContent, record_id: linked } });
+assert.equal(view.results.hidden, true);
+assert.equal(view.records.children.length, 0);
+
+view.receive(recent);
+const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(captured));
+assert.equal(view.card()('h2').textContent, 'Latest result');
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A · ' + date);
+assert.equal(view.card()('.naome-card-summary').hidden, true);
+assert.equal(view.card(1)('h2').textContent, 'Earlier method');
+assert.notEqual(view.card()('button').attributes['aria-controls'], view.card(1)('button').attributes['aria-controls']);
+view.click(1);
+assert.deepEqual(details(view.card(1)), { Projekt: 'calibration', 'Eintrags-ID': linked });
+assert.deepEqual(details(view.card()), {});
+view.click(1);
+assert.deepEqual(details(view.card(1)), {});
+assert.equal(view.notice.hidden, true);
 
 const replay = widget();
-replay.receive(result);
-assert.equal(replay.get('toggle').textContent, 'Show details');
+replay.receive(searched);
+assert.equal(replay.card()('h2').textContent, 'Matched result');
+assert.equal(replay.card()('.naome-card-context').textContent, 'Derivation · Lab A');
+assert.equal(replay.card()('.naome-card-summary').textContent, 'A matched excerpt from the approved snapshot.');
+assert.equal(replay.card(1)('h2').textContent, 'Research record');
+assert.equal(replay.notice.hidden, false);
 replay.click();
-assert.equal(replay.get('record').textContent, record);
+assert.deepEqual(details(replay.card()), { 'Search excerpt': 'A matched excerpt from the approved snapshot.',
+  'Linked records': linked, 'Search snapshot': head, 'Match location': '/fields/summary',
+  Project: 'calibration', 'Record ID': record });
+replay.receive({ ...searched, isError: true });
+assert.equal(replay.results.hidden, true);
+assert.equal(replay.messages.at(-1).params.height, 0);
+replay.receive({ structuredContent: { ...searched.structuredContent, hits: [] } });
+assert.equal(replay.results.hidden, true);
+replay.receive(searched);
+assert.equal(replay.card()('dl').hidden, true);
 replay.deliver({ id: 2, method: 'ui/resource-teardown' });
-assert.equal(replay.get('card').hidden, true);
+assert.equal(replay.results.hidden, true);
+assert.equal(replay.records.children.length, 0);
 assert.equal(replay.messages.at(-1).id, 2);
-console.log('Verified the research card lifecycle, archived data, host locale and disclosure.');
+assert.equal(view.messages.concat(replay.messages).some(message => message.method === 'tools/call'), false);
+console.log('Verified shared write, recent and search cards, disclosure, localization and empty states.');

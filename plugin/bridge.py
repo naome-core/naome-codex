@@ -323,6 +323,26 @@ class Bridge:
                 progress["chat_pending_reports"] = sum(row["pending_reports"] for row in destinations)
         return progress
 
+    def recent_research(self, binding, limit):
+        """List locally acknowledged Codex research receipts for this project and lab."""
+        self.require_lab(binding["lab"])
+        with self.open() as db:
+            rows = db.execute(
+                "SELECT e.record, e.document, e.captured_at FROM binding b JOIN entry e USING(session) "
+                "WHERE b.project=? AND b.lab=? AND e.record IS NOT NULL AND e.event GLOB 'research:*' "
+                "ORDER BY e.captured_at DESC, e.rowid DESC LIMIT ?",
+                (binding["project"], binding["lab"], limit),
+            ).fetchall()
+        receipts = []
+        for row in rows:
+            document = json.loads(row["document"])
+            receipts.append({
+                "record_id": row["record"], "title": document["subject"],
+                "category": document["fields"]["category"],
+                "captured_at": row["captured_at"].replace(" ", "T") + "Z",
+            })
+        return receipts
+
     def archive(self, binding, offset=None, budget=2):
         """Deposit evidence locally even when there is no assigned job."""
         session = binding["session"]

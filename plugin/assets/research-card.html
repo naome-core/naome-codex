@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naome research block</title>
+<title>Naome research records</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; }
@@ -11,124 +11,189 @@
 </style>
 </head>
 <body>
-<article id="card" class="naome-card" aria-labelledby="heading" hidden>
-  <div class="naome-card-top">
-    <header class="naome-card-header">
-      <img class="naome-card-logo" src="__NAOME_CARD_LOGO__" alt="" width="18" height="18">
-      <div>
-        <h2 id="heading"></h2>
-        <p id="labels" class="naome-card-context"></p>
-      </div>
-    </header>
-    <button id="toggle" class="naome-card-toggle" type="button" aria-expanded="false" aria-controls="details">Show details</button>
-  </div>
-  <p id="preview" class="naome-card-summary"></p>
-  <dl id="details" class="naome-card-fields" aria-label="Research block details" hidden>
-    <div><dt id="summary-label">Summary</dt><dd id="summary"></dd></div>
-    <div id="sources-field" hidden><dt id="sources-label">Sources</dt><dd><ul id="sources"></ul></dd></div>
-    <div id="linked-field" hidden><dt id="linked-label">Linked records</dt><dd><ul id="linked"></ul></dd></div>
-    <div><dt id="record-label">Record ID</dt><dd><code id="record"></code></dd></div>
-  </dl>
-</article>
+<section id="results" aria-label="Naome research records" hidden>
+  <div id="records" class="naome-record-list"></div>
+  <p id="notice" class="naome-search-notice" hidden></p>
+</section>
+<template id="record-template">
+  <article class="naome-card">
+    <div class="naome-card-top">
+      <header class="naome-card-header">
+        <img class="naome-card-logo" src="__NAOME_CARD_LOGO__" alt="" width="18" height="18">
+        <div>
+          <h2></h2>
+          <p class="naome-card-context"></p>
+        </div>
+      </header>
+      <button class="naome-card-toggle" type="button" aria-expanded="false">Show details</button>
+    </div>
+    <p class="naome-card-summary" hidden></p>
+    <dl class="naome-card-fields" hidden></dl>
+  </article>
+</template>
 <script>
   (() => {
-    const byId = (id) => document.getElementById(id);
-    const card = byId('card');
-    const button = byId('toggle');
-    const details = byId('details');
+    const results = document.getElementById('results');
+    const records = document.getElementById('records');
+    const notice = document.getElementById('notice');
+    const template = document.getElementById('record-template');
     const translations = {
       en: {
-        title: 'Naome research block', details: 'Research block details',
-        show: 'Show details', hide: 'Hide details',
-        fields: { summary: 'Summary', sources: 'Sources', linked: 'Linked records', record: 'Record ID' },
+        title: 'Naome research records', details: 'Research record details', record: 'Research record',
+        show: 'Show details', hide: 'Hide details', limited: 'Search coverage is limited.',
+        fields: { summary: 'Summary', excerpt: 'Search excerpt', sources: 'Sources', links: 'Linked records',
+          recordId: 'Record ID', project: 'Project', snapshot: 'Search snapshot', location: 'Match location' },
         categories: { question: 'Question', hypothesis: 'Hypothesis', method: 'Method',
-          observation: 'Observation', result: 'Result', limitation: 'Limitation', correction: 'Correction' }
+          observation: 'Observation', result: 'Result', limitation: 'Limitation', correction: 'Correction',
+          claim: 'Claim', plan: 'Plan', occurrence: 'Occurrence', derivation: 'Derivation' }
       },
       de: {
-        title: 'Naome-Forschungsblock', details: 'Details zum Forschungsblock',
-        show: 'Details anzeigen', hide: 'Details ausblenden',
-        fields: { summary: 'Zusammenfassung', sources: 'Quellen', linked: 'Verknüpfte Einträge', record: 'Eintrags-ID' },
+        title: 'Naome-Forschungseinträge', details: 'Details zum Forschungseintrag', record: 'Forschungseintrag',
+        show: 'Details anzeigen', hide: 'Details ausblenden', limited: 'Die Suche deckt nur einen Teil der Daten ab.',
+        fields: { summary: 'Zusammenfassung', excerpt: 'Suchauszug', sources: 'Quellen', links: 'Verknüpfte Einträge',
+          recordId: 'Eintrags-ID', project: 'Projekt', snapshot: 'Such-Snapshot', location: 'Fundstelle' },
         categories: { question: 'Frage', hypothesis: 'Hypothese', method: 'Methode',
-          observation: 'Beobachtung', result: 'Ergebnis', limitation: 'Einschränkung', correction: 'Korrektur' }
+          observation: 'Beobachtung', result: 'Ergebnis', limitation: 'Einschränkung', correction: 'Korrektur',
+          claim: 'Behauptung', plan: 'Plan', occurrence: 'Ereignis', derivation: 'Ableitung' }
       }
     };
     let labels = translations.en;
+    const dateOptions = { dateStyle: 'medium', timeStyle: 'short' };
+    let dateFormatter = new Intl.DateTimeFormat('en', dateOptions);
+    let cards = [];
     let ready = false;
-    let block;
-    let display;
     let lastHeight;
     const send = (message) => window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
     const reportSize = () => {
-      const height = Math.ceil(document.body.getBoundingClientRect().height);
+      const height = Math.ceil(results.getBoundingClientRect().height);
       if (!ready || height === lastHeight) return;
       lastHeight = height;
       send({ method: 'ui/notifications/size-changed', params: { height } });
     };
 
-    function fillList(id, values) {
-      byId(`${id}-field`).hidden = values.length === 0;
-      byId(id).replaceChildren(...values.map((value) => {
-        const row = document.createElement('li');
-        row.textContent = value;
-        return row;
-      }));
+    const isId = (value) => typeof value === 'string' && /^1:[012]:[0-9a-f]{64}$/.test(value);
+    const isTextList = (values) => Array.isArray(values) && values.every(value => typeof value === 'string');
+    const excerptPreview = (value) => value.length <= 160 ? value : value.slice(0, 159).trimEnd() + '…';
+
+    function recordEntries(result) {
+      const data = result?.structuredContent;
+      if (result?.isError || typeof data?.lab !== 'string') return [];
+      if (data.source === 'codex_archive_receipts' && Array.isArray(data.records)) {
+        return data.records.filter(record => isId(record?.record_id) && typeof record.title === 'string')
+          .map(record => ({ recordId: record.record_id, title: record.title, category: record.category,
+            lab: data.lab, capturedAt: record.captured_at, fields: { project: data.project } }));
+      }
+      if (isId(data.head) && Array.isArray(data.hits)) {
+        return data.hits.filter(hit => isId(hit?.record_id)).map(hit => {
+          const excerpt = typeof hit.snippet === 'string' ? hit.snippet : '';
+          const links = Array.isArray(hit.links) ? hit.links.map(link => link?.target).filter(isId) : [];
+          return { recordId: hit.record_id, title: hit.subject, category: hit.kind, lab: data.lab,
+            preview: excerptPreview(excerpt), fields: { excerpt, links, snapshot: data.head,
+              location: hit.location?.pointer, project: data.project } };
+        });
+      }
+      const full = result?._meta?.['naome/research-block'];
+      if (!isId(data.record_id) || full?.record_id !== data.record_id ||
+          ![data.title, data.category, data.summary, full.summary].every(value => typeof value === 'string') ||
+          !isTextList(full.sources) || !isTextList(full.linked_records)) return [];
+      return [{ recordId: data.record_id, title: data.title, category: data.category, lab: data.lab,
+        preview: data.summary, fields: { summary: full.summary, sources: full.sources, links: full.linked_records } }];
     }
 
-    function updateLabels() {
-      button.textContent = details.hidden ? labels.show : labels.hide;
-      if (display) {
-        const category = Object.hasOwn(labels.categories, display.category)
-          ? labels.categories[display.category] : display.category;
-        byId('labels').textContent = `${category} · Lab ${display.lab}`;
+    function field(name, value) {
+      const isList = isTextList(value) && value.length > 0;
+      if (!isList && (typeof value !== 'string' || !value)) return null;
+      const row = document.createElement('div');
+      const label = document.createElement('dt');
+      label.textContent = labels.fields[name];
+      const content = document.createElement('dd');
+      if (isList) {
+        const list = document.createElement('ul');
+        list.append(...value.map(text => {
+          const item = document.createElement('li');
+          item.textContent = text;
+          return item;
+        }));
+        content.append(list);
+      } else if (name === 'recordId' || name === 'snapshot') {
+        const code = document.createElement('code');
+        code.textContent = value;
+        content.append(code);
+      } else {
+        content.textContent = value;
+      }
+      row.append(label, content);
+      return row;
+    }
+
+    function updateCard({ entry, heading, context, toggle, details }) {
+      heading.textContent = typeof entry.title === 'string' && entry.title ? entry.title : labels.record;
+      const category = typeof entry.category === 'string' && Object.hasOwn(labels.categories, entry.category)
+        ? labels.categories[entry.category] : '';
+      const date = typeof entry.capturedAt === 'string' ? new Date(entry.capturedAt) : null;
+      const timestamp = date && Number.isFinite(date.getTime()) ? dateFormatter.format(date) : '';
+      context.textContent = [category, 'Lab ' + entry.lab, timestamp].filter(Boolean).join(' · ');
+      details.setAttribute('aria-label', labels.details);
+      toggle.textContent = details.hidden ? labels.show : labels.hide;
+      if (!details.hidden) {
+        const fields = { ...entry.fields, recordId: entry.recordId };
+        details.replaceChildren(...Object.entries(fields).map(([name, value]) => field(name, value)).filter(Boolean));
       }
     }
 
-    function applyHostContext({ locale, theme } = {}) {
-      if (typeof locale === 'string') {
-        const language = /^de(?:-|$)/i.test(locale) ? 'de' : 'en';
+    function makeCard(entry, index) {
+      const element = template.content.firstElementChild.cloneNode(true);
+      const heading = element.querySelector('h2');
+      const context = element.querySelector('.naome-card-context');
+      const toggle = element.querySelector('button');
+      const details = element.querySelector('dl');
+      const preview = element.querySelector('.naome-card-summary');
+      heading.id = 'record-heading-' + index;
+      details.id = 'record-details-' + index;
+      element.setAttribute('aria-labelledby', heading.id);
+      toggle.setAttribute('aria-controls', details.id);
+      preview.textContent = entry.preview ?? '';
+      preview.hidden = !entry.preview;
+      const card = { entry, element, heading, context, toggle, details };
+      toggle.addEventListener('click', () => {
+        details.hidden = !details.hidden;
+        toggle.setAttribute('aria-expanded', String(!details.hidden));
+        if (details.hidden) details.replaceChildren();
+        updateCard(card);
+        reportSize();
+      });
+      updateCard(card);
+      return card;
+    }
+
+    function applyHostContext({ locale: hostLocale, theme } = {}) {
+      if (typeof hostLocale === 'string') {
+        const language = /^de(?:-|$)/i.test(hostLocale) ? 'de' : 'en';
+        try {
+          dateFormatter = new Intl.DateTimeFormat(hostLocale, dateOptions);
+        } catch {
+          dateFormatter = new Intl.DateTimeFormat(language, dateOptions);
+        }
         labels = translations[language];
         document.documentElement.lang = language;
         document.title = labels.title;
-        details.setAttribute('aria-label', labels.details);
-        for (const [field, label] of Object.entries(labels.fields)) {
-          byId(`${field}-label`).textContent = label;
-        }
-        updateLabels();
+        results.setAttribute('aria-label', labels.title);
+        notice.textContent = labels.limited;
+        cards.forEach(updateCard);
       }
       if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
     }
 
-    function expand(open) {
-      details.hidden = !open;
-      button.setAttribute('aria-expanded', String(open));
-      updateLabels();
-      byId('summary').textContent = open ? block.summary : '';
-      fillList('sources', open ? block.sources : []);
-      fillList('linked', open ? block.linked_records : []);
-      byId('record').textContent = open ? block.record_id : '';
+    function showResult(result) {
+      cards = recordEntries(result).map(makeCard);
+      records.replaceChildren(...cards.map(card => card.element));
+      const data = result?.structuredContent;
+      notice.textContent = labels.limited;
+      notice.hidden = !Array.isArray(data?.hits) ||
+        ![data.limited_coverage, data.vector_budget_exhausted, data.query_limited].includes(true);
+      results.hidden = cards.length === 0;
       reportSize();
     }
-
-    function showResult(result) {
-      const summary = result?.structuredContent;
-      const full = result?._meta?.['naome/research-block'];
-      const isTextList = (values) => Array.isArray(values) && values.every(value => typeof value === 'string');
-      const valid = !result?.isError && typeof summary?.record_id === 'string' && summary.record_id &&
-        [summary.title, summary.lab, summary.category, summary.summary].every(value => typeof value === 'string') &&
-        full?.record_id === summary.record_id && typeof full.summary === 'string' &&
-        isTextList(full.sources) && isTextList(full.linked_records);
-      block = valid ? full : undefined;
-      display = valid ? summary : undefined;
-      byId('heading').textContent = display?.title ?? '';
-      byId('labels').textContent = '';
-      byId('preview').textContent = display?.summary ?? '';
-      card.hidden = !valid;
-      expand(false);
-    }
-
-    button.addEventListener('click', () => {
-      if (block) expand(details.hidden);
-    });
 
     window.addEventListener('message', ({ source, data }) => {
       if (source !== window.parent || data?.jsonrpc !== '2.0') return;
@@ -151,9 +216,9 @@
         send({ id: data.id, result: {} });
       }
     });
-    new ResizeObserver(reportSize).observe(card);
+    new ResizeObserver(reportSize).observe(results);
     send({ id: 1, method: 'ui/initialize', params: {
-      appInfo: { name: 'Naome research block', version: '0.1.0' },
+      appInfo: { name: 'Naome research records', version: '0.1.0' },
       appCapabilities: {}, protocolVersion: '2026-01-26'
     } });
   })();

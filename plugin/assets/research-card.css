@@ -1,3 +1,12 @@
+.naome-record-list {
+  display: grid;
+  gap: 8px;
+}
+.naome-search-notice {
+  margin: 6px 12px 0;
+  color: var(--color-text-secondary, light-dark(#565962, #b5b8c0));
+  font: 12px/1.4 system-ui, sans-serif;
+}
 .naome-card {
   --naome-surface: light-dark(#fafafb, #242528);
   --naome-text: var(--color-text-primary, light-dark(#242528, #ececef));
@@ -89,8 +98,7 @@
 }
 .naome-card-fields > div:not([hidden]) ~ div:not([hidden]) { margin-top: 6px; }
 .naome-card dt { margin: 0 0 1px; color: var(--naome-muted); font-size: 12px; font-weight: 600; }
-.naome-card dd { margin: 0; }
-.naome-card dd#summary { white-space: pre-wrap; }
+.naome-card dd { margin: 0; white-space: pre-wrap; }
 .naome-card ul { margin: 0; padding-inline-start: 17px; }
 .naome-card code { font-size: 12px; overflow-wrap: anywhere; }
 @media (pointer: coarse) {

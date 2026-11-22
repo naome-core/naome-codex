@@ -50,6 +50,7 @@ def main():
             "import json, os, sys\nfrom pathlib import Path\n"
             f"binary = {str(NAOME)!r}\n"
             "if sys.argv[-2:] == ['archive', 'search-session']:\n"
+            "    assert Path.cwd() == Path(sys.argv[sys.argv.index('--directory') + 1])\n"
             f"    with Path({str(launches)!r}).open('a') as log: log.write(str(os.getpid()) + '\\n')\n"
             f"    if Path({str(revoke)!r}).exists():\n"
             f"        config = Path({str(config)!r})\n"
@@ -77,8 +78,15 @@ def main():
             assert token, response
             return token.group(1)
 
-        with subprocess.Popen([sys.executable, ENTRY, "mcp"], text=True, env=env,
+        launch_dir = root / "plugin-cache"
+        launch_dir.mkdir()
+        with subprocess.Popen([sys.executable, ENTRY, "mcp"], text=True, env=env, cwd=launch_dir,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE) as server:
+            server.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+            server.stdin.flush()
+            assert "tools" in json.loads(server.stdout.readline())["result"]["capabilities"]
+            # Reinstalling the plugin can remove a live server's original working directory.
+            launch_dir.rmdir()
             def call(token, query, **extra):
                 server.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
                     "name": "search_research", "arguments": {"binding_token": token, "query": query, **extra},
@@ -89,7 +97,12 @@ def main():
             def result(token, query, **extra):
                 reply = call(token, query, **extra)
                 assert not reply["isError"], reply
-                return json.loads(reply["content"][0]["text"])
+                report = json.loads(reply["content"][0]["text"])
+                if report["hits"]:
+                    assert reply["structuredContent"] == report and "_meta" not in reply
+                else:
+                    assert "structuredContent" not in reply
+                return report
 
             try:
                 token = bind("a", "Find previous calibration work.")
@@ -133,7 +146,7 @@ def main():
                 configure()
                 revoke.touch()
                 rejected = call(token_b, only_b)
-                assert rejected["isError"] and only_b not in json.dumps(rejected)
+                assert rejected["isError"] and only_b not in json.dumps(rejected) and "structuredContent" not in rejected
                 assert "changed while the query was running" in rejected["content"][0]["text"]
                 assert call(token_b, only_b)["isError"]
                 revoke.unlink()

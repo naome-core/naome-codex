@@ -134,6 +134,7 @@ def main():
             pending = record(b, "Deferred result in lab B")
             assert (pending["lab"], pending["job"]) == ("B", jobs[1])
             assert pending["local_record"] is None and pending["pending_local"] == 1, pending
+            assert tool(b, "list_recent_research")["records"] == []
             assert "pending local queue" in json.dumps(tool_event("two", "deferred-tool"))
             a2 = choose("three", "Continue with the chat default.", "A")
             assert len({a, a2, b}) == 3
@@ -191,6 +192,9 @@ def main():
             choose("seven", "Continue here.", "B")
             choose("eight", "/lab A", "A")
             b2 = choose("nine", "Continue here.", "B")
+            b_receipts = tool(b2, "list_recent_research", limit=10)
+            assert b_receipts["lab"] == "B"
+            assert [item["title"] for item in b_receipts["records"]] == ["Deferred result in lab B"]
             assert hook("UserPromptSubmit", "outside", prompt="Continue.", cwd=str(temp)) == {}
             tool(b2, "research_status", error=True)
             choose("ten", "/lab A\n/lab B")

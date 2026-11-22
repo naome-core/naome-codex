@@ -1,4 +1,4 @@
-"""Presentation of a locally acknowledged research record over MCP Apps."""
+"""Presentation of confirmed research records and authorized search hits over MCP Apps."""
 
 import base64
 from functools import lru_cache
@@ -6,7 +6,8 @@ from pathlib import Path
 
 from bridge import ID
 
-URI = "ui://naome/research-card-v1.html"
+URI = "ui://naome/research-card-v2.html"
+LEGACY_URI = "ui://naome/research-card-v1.html"
 MIME_TYPE = "text/html;profile=mcp-app"
 DETAILS_KEY = "naome/research-block"
 RESOURCE = {"uri": URI, "name": "Naome research block", "mimeType": MIME_TYPE}
@@ -27,12 +28,17 @@ def card_html():
 
 
 def read_resource(uri):
-    if uri != URI:
+    if uri not in (URI, LEGACY_URI):
         raise ResourceNotFound("Unknown Naome resource.")
-    return {"contents": [{**RESOURCE, "text": card_html(), "_meta": {"ui": {
-        "prefersBorder": False,
-        "csp": {"connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": []},
-    }}}]}
+    return {"contents": [{**RESOURCE, "uri": uri, "text": card_html(), "_meta": {
+        "ui": {
+            "prefersBorder": False,
+            "csp": {"connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": []},
+        },
+        "openai/widgetShowCodexWidgetInline": True,
+        "openai/widgetMinFrameHeight": 0,
+        "openai/widgetHeightHint": 104,
+    }}]}
 
 
 def card_data(receipt, category, title, fields, references):

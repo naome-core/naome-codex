@@ -1,6 +1,6 @@
 ---
 name: naome-lab-research
-description: Design experiments, test hypotheses, compare studies, prototypes or benchmarks, and investigate conflicting findings. Record the evidence and limitations in the selected Naome lab. Also create Naome projects on request.
+description: Design experiments, test hypotheses, compare studies, prototypes or benchmarks, and investigate conflicting findings. Record evidence and limitations in the selected Naome lab, look up recent research records, or create a Naome project on request.
 ---
 
 # Naome research workflow
@@ -15,7 +15,11 @@ The lab binding identifies the destination. Follow the user's request and worksp
 
 ## Find prior lab evidence
 
-When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Report the returned snapshot and any coverage limits that affect the conclusion. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
+Use `list_recent_research` when asked what was recorded most recently. It lists receipts for explicit Naome Codex research records confirmed by the selected lab, across chats in the current project. It returns the title, category, capture time and record ID without a search snapshot. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
+
+When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
+
+Use a displayed research card as the answer when the user only asks to see records. Add requested analysis or a material caveat the card does not convey. On clients without cards, use the text results, including the snapshot and any material coverage limits. Explain empty results and errors briefly.
 
 ## Record material research milestones
 

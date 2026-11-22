@@ -64,8 +64,10 @@ class SearchSession:
             if value:
                 env[name] = value
         try:
+            # A plugin reinstall can remove the server's original working directory.
             self.process = subprocess.Popen(
                 [executable, "--directory", binding["lab"], "--json", "archive", "search-session"],
+                cwd=binding["lab"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=0, start_new_session=True, env=env,
             )
