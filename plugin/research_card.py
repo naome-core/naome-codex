@@ -6,11 +6,11 @@ from pathlib import Path
 
 from bridge import ID
 
-URI = "ui://naome/research-card-v2.html"
-LEGACY_URI = "ui://naome/research-card-v1.html"
+URI = "ui://naome/research-card-v3.html"
+LEGACY_URIS = ("ui://naome/research-card-v1.html", "ui://naome/research-card-v2.html")
 MIME_TYPE = "text/html;profile=mcp-app"
 DETAILS_KEY = "naome/research-block"
-RECENT_SUMMARIES_KEY = "naome/research-summaries"
+RECENT_DETAILS_KEY = "naome/research-details"
 RESOURCE = {"uri": URI, "name": "Naome research block", "mimeType": MIME_TYPE}
 TOOL_META = {"ui": {"resourceUri": URI}, "openai/ui": {"preferredModelDisplayMode": "inline"}}
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -29,7 +29,7 @@ def card_html():
 
 
 def read_resource(uri):
-    if uri not in (URI, LEGACY_URI):
+    if uri != URI and uri not in LEGACY_URIS:
         raise ResourceNotFound("Unknown Naome resource.")
     return {"contents": [{**RESOURCE, "uri": uri, "text": card_html(), "_meta": {
         "ui": {
@@ -58,15 +58,18 @@ def card_data(receipt, category, title, fields, references):
 
 def recent_card_data(receipts):
     records = []
-    summaries = {}
+    details = {}
     for receipt in receipts:
         record = receipt.copy()
         summary = record.pop("summary")
+        detail = {"sources": record.pop("sources"), "linked_records": record.pop("linked_records")}
         if isinstance(summary, str) and summary.strip():
             record["preview"] = summary_preview(summary)
-            summaries[record["record_id"]] = summary
+            detail["summary"] = summary
+        if any(detail.values()):
+            details[record["record_id"]] = detail
         records.append(record)
-    return records, summaries
+    return records, details
 
 
 def summary_preview(summary):

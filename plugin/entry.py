@@ -9,11 +9,10 @@ import subprocess
 import sys
 
 from archive_search import MAX_HITS, MODES, QUERY_LIMIT, SearchSession, search_research
-from autostart import schedule
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 from project import PROJECT, create_project
 from research_card import (
-    RECENT_SUMMARIES_KEY, RESOURCE, TOOL_META, ResourceNotFound, card_data, read_resource, recent_card_data,
+    RECENT_DETAILS_KEY, RESOURCE, TOOL_META, ResourceNotFound, card_data, read_resource, recent_card_data,
 )
 
 ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired)
@@ -27,6 +26,22 @@ READ_TARGET = {
     "project": {"type": "string", "description": "The exact enrolled project the user wants to read. Omit for the workspace project."},
     "lab": LAB,
 }
+SEARCH_QUERY = {"type": "string", "maxLength": QUERY_LIMIT,
+                "description": "A question, keywords, or a complete record ID."}
+SEARCH_MODE = {"type": "string", "enum": list(MODES), "default": "auto"}
+RECORD_FIELDS = {
+    **TOKENS,
+    "category": {"type": "string", "enum": list(KINDS)},
+    "title": {"type": "string", "maxLength": 180},
+    "summary": {"type": "string", "maxLength": 6000},
+    "sources": {"type": "array", "items": {"type": "string", "maxLength": 500}, "maxItems": 12,
+                "description": "Evidence references such as URLs, a pinned revision and path, or an observed tool event."},
+    "linked_records": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+    "delivery": {"type": "string", "enum": ["local"], "default": "local",
+                 "description": "Optional compatibility argument for local archival."},
+}
+RECORD_REQUIRED = ["binding_token", "category", "title", "summary", "sources"]
+RECORD_ANNOTATIONS = {"readOnlyHint": False, "openWorldHint": False}
 
 
 def tool(name, description, properties, required, **metadata):
@@ -42,21 +57,19 @@ def tool(name, description, properties, required, **metadata):
 
 
 TOOLS = [
-    tool("create_project", "Create and enroll a new local research workspace at the user's request. "
-         "The default creates an offline lab archive. Network mode starts a dedicated lab and orchestrator "
-         "on this computer and verifies their connection. Available before the workspace is enrolled.",
+    tool("create_project", "Create and enroll a new research workspace with a local Protocol archive. "
+         "Available before the workspace is enrolled.",
          {
              "project": {"type": "string", "pattern": f"^{PROJECT}$",
                          "description": "A short lowercase name for the new project and its folder."},
-             "mode": {"type": "string", "enum": ["local", "network"], "default": "local"},
          }, ["project"]),
-    tool("research_status", "Show pending work for the selected lab and across this chat, and the current assignment.",
+    tool("research_status", "Show pending archive writes for the selected lab and across this chat.",
          TOKENS, ["binding_token"], annotations=READ_ONLY),
     tool("select_lab", "Select a lab within this workspace project before recording evidence in this turn. "
          "Set remember only when the user wants it as this chat's default lab.",
          {**TOKENS, "lab": LAB, "remember": {"type": "boolean", "default": False}},
          ["binding_token", "lab"], annotations={"readOnlyHint": False, "openWorldHint": False}),
-    tool("list_recent_research", "List the latest explicitly recorded Naome Codex research receipts across chats. "
+    tool("list_recent_research", "Show the latest Naome Codex research receipts when the user asks to see them. "
          "Pass project when the user asks to look in another enrolled project. "
          "Returns titles, categories, capture times, summaries and IDs for confirmed local research records. "
          "Nonempty results have an inline card. Excludes automatic hook events and pending writes. "
@@ -67,39 +80,33 @@ TOOLS = [
              "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RECENT_RECORDS, "default": 1,
                        "description": "Use one for the latest record. Increase this only for requests for multiple records."},
          }, ["binding_token"], _meta=TOOL_META, annotations=READ_ONLY),
-    tool("search_research", "Search the specified project's approved snapshot. Pass project when the user asks to look in another enrolled project. "
+    tool("search_research", "Show matches in an approved snapshot when the user asks to see search results. "
+         "Pass project when the user asks to look in another enrolled project. "
          "Uses the native archive search and may prepare its local derived index. Returns scoped records, "
          "verified links, the searched snapshot and search coverage. Nonempty results have an inline card. "
          "An exact record ID needs no model.",
          {
              **TOKENS,
              **READ_TARGET,
-             "query": {"type": "string", "maxLength": QUERY_LIMIT,
-                       "description": "A question, keywords, or a complete record ID."},
+             "query": SEARCH_QUERY,
              "limit": {"type": "integer", "minimum": 1, "maximum": MAX_HITS, "default": 5},
-             "mode": {"type": "string", "enum": list(MODES), "default": "auto"},
+             "mode": SEARCH_MODE,
          }, ["binding_token", "query"], _meta=TOOL_META, annotations=READ_ONLY),
-    tool("record_research", "Append a structured research record to the selected local lab using evidence "
-         "observed in this turn. With delivery=local it stays in the lab and is not queued for submission. "
-         "With delivery=assigned (the default), an active assignment can also send a report to its configured "
-         "orchestrator. Use the destination authorized by the user and workspace.",
+    tool("lookup_research", "Read Naome research as an intermediate step for an analysis, without an inline card. "
+         "Omit query for recent Codex records. Supply query to search the approved snapshot. "
+         "Pass project and lab to select an enrolled read destination.",
          {
-             **TOKENS,
-             "category": {"type": "string", "enum": list(KINDS)},
-             "title": {"type": "string", "maxLength": 180},
-             "summary": {"type": "string", "maxLength": 6000},
-             "sources": {
-                 "type": "array", "items": {"type": "string", "maxLength": 500},
-                 "maxItems": 12,
-                 "description": "Evidence references such as URLs, a pinned revision and path, or an observed tool event.",
-             },
-             "linked_records": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
-             "delivery": {"type": "string", "enum": ["local", "assigned"], "default": "assigned",
-                          "description": "Choose local archival only or allow submission to the active assignment."},
-         },
-         ["binding_token", "category", "title", "summary", "sources"], _meta=TOOL_META,
-         annotations={"readOnlyHint": False, "openWorldHint": True}),
-    tool("retry_research_delivery", "Retry local capture and delivery of any assigned research reports.",
+             **TOKENS, **READ_TARGET, "query": SEARCH_QUERY, "mode": {"type": "string", "enum": list(MODES)},
+             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_HITS,
+                       "description": "Maximum results. Defaults to one for recent records or five for snapshot search."},
+         }, ["binding_token"], annotations=READ_ONLY),
+    tool("record_research", "Archive an authorized research record and show its card when the user asks to see it. "
+         "The record is stored in the local lab archive.",
+         RECORD_FIELDS, RECORD_REQUIRED, _meta=TOOL_META, annotations=RECORD_ANNOTATIONS),
+    tool("capture_research", "Archive an authorized research record during research and return a short text receipt. "
+         "Check local_record and the pending count to confirm storage.",
+         RECORD_FIELDS, RECORD_REQUIRED, annotations=RECORD_ANNOTATIONS),
+    tool("retry_research_delivery", "Retry this chat's pending local archive writes.",
          TOKENS, ["binding_token"]),
 ]
 
@@ -120,6 +127,11 @@ def do_tool(name, arguments, search):
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
         raise ValueError("The active Codex turn has no valid Naome lab token.")
+    background = name in {"lookup_research", "capture_research"}
+    if name == "lookup_research":
+        name = "search_research" if "query" in arguments else "list_recent_research"
+    elif name == "capture_research":
+        name = "record_research"
     if name == "select_lab":
         remember = arguments.get("remember", False)
         if not (arguments.keys() <= {"binding_token", "lab", "remember"} and type(remember) is bool):
@@ -127,33 +139,33 @@ def do_tool(name, arguments, search):
         selected = bridge.select_lab(binding, arguments.get("lab"), remember)
         if not selected:
             raise ValueError("This is no longer the active Codex turn.")
-        notice = schedule(bridge, selected)
-        return tool_result({"project": selected["project_name"], "lab": selected["lab_name"], "job": selected["job"],
-                            **({"notice": notice} if notice else {})})
+        return tool_result({"project": selected["project_name"], "lab": selected["lab_name"]})
     destination = {"project": binding["project_name"], "lab": binding["lab_name"]}
     if name == "research_status":
-        return tool_result({**destination, "job": binding["job"],
-                            **bridge.status(binding, include_chat=True)})
+        return tool_result({**destination, **bridge.status(binding, include_chat=True)})
     if name == "list_recent_research":
         limit = arguments.get("limit", 1)
         if not (arguments.keys() <= {"binding_token", "limit", *READ_TARGET}
                 and type(limit) is int and 1 <= limit <= MAX_RECENT_RECORDS):
             raise ValueError("Invalid recent research arguments.")
         target = bridge.read_destination(binding, arguments)
-        records, summaries = recent_card_data(bridge.recent_research(target, limit))
-        reply = tool_result({"project": target["project_name"], "lab": target["lab_name"],
-                             "source": "codex_archive_receipts", "records": records}, card=bool(records))
-        if summaries:
-            reply["_meta"] = {RECENT_SUMMARIES_KEY: summaries}
+        receipt = {"project": target["project_name"], "lab": target["lab_name"],
+                   "source": "codex_archive_receipts", "records": bridge.recent_research(target, limit)}
+        if background:
+            return tool_result(receipt)
+        records, details = recent_card_data(receipt["records"])
+        reply = tool_result({**receipt, "records": records}, card=bool(records))
+        if details:
+            reply["_meta"] = {RECENT_DETAILS_KEY: details}
         return reply
     if name == "search_research":
         result = search_research(bridge, bridge.read_destination(binding, arguments), arguments, search)
-        return tool_result(result, card=bool(result["hits"]))
+        return tool_result(result, card=not background and (bool(result["hits"]) or result["coverage"] != "complete"))
     if name == "retry_research_delivery":
         return tool_result(bridge.flush(binding))
     if name != "record_research":
         raise ValueError("Unknown NAOME tool.")
-    if not arguments.keys() <= {"binding_token", "category", "title", "summary", "sources", "linked_records", "delivery"}:
+    if not arguments.keys() <= RECORD_FIELDS.keys():
         raise ValueError("Invalid research record arguments.")
     if not binding["lab"]:
         raise ValueError("Use select_lab before recording in this workspace.")
@@ -173,26 +185,21 @@ def do_tool(name, arguments, search):
         raise ValueError("Observations, results, and corrections need evidence references.")
     if category == "correction" and not supplied:
         raise ValueError("A correction must link to the original archived record.")
-    delivery = arguments.get("delivery", "assigned")
-    if delivery not in ("local", "assigned"):
-        raise ValueError("Invalid research delivery mode.")
+    if arguments.get("delivery", "local") != "local":
+        raise ValueError("Naome Codex stores research records locally. Omit delivery or use local.")
     references = sorted(set(supplied))
     title = title.strip()
     fields = {"summary": summary.strip(), "sources": sources, "recorded_by": "Codex MCP",
               "codex_turn": binding["turn"]}
-    identity = [category, title, fields, references]
-    if delivery == "local" and binding["job"]:
-        # Keep the local record distinct from a previously queued assigned write of the same content.
-        identity.append("local")
-        binding = {**binding, "job": None}
-    event = "research:" + digest(identity)
+    event = "research:" + digest([category, title, fields, references])
     offset = bridge.enqueue(binding, event, category, title, fields, references)
     local = bridge.archive(binding, offset)
-    delivered = bridge.flush(binding) if binding["job"] else {}
-    receipt = {"offset": offset, **destination, "job": binding["job"],
-               **delivered, **bridge.status(binding, offset),
+    receipt = {"offset": offset, **destination, **bridge.status(binding, offset),
                **{key: value for key, value in local.items() if key == "local_retry"}}
-    return {**tool_result(receipt), **card_data(receipt, category, title, fields, references)}
+    reply = tool_result(receipt)
+    if not background:
+        reply.update(card_data(receipt, category, title, fields, references))
+    return reply
 
 
 def context_output(binding, progress, projects):
@@ -200,9 +207,11 @@ def context_output(binding, progress, projects):
     selection = (f"Naome selected lab {lab} for this turn. " if lab else "No lab is selected for recording. ")
     selection += f"The workspace project is {binding['project_name']}. "
     reading = (
-        "Use list_recent_research for the latest research records. "
+        "Use list_recent_research or search_research to display results the user asks to see. "
+        "Use lookup_research for reads during analysis and capture_research for short research write receipts. "
         "For reads in a project or lab requested by the user, pass the enrolled names as project and lab tool arguments. "
         f"Enrolled projects and labs are {encode(projects)}. "
+        "An empty lab list means that project's lab configuration needs attention. "
         "The list uses local archive acknowledgments and works without a search snapshot. "
         "For simple record lookups, use the displayed research card as the answer. "
         "Add requested analysis or any material limit the card does not show. "
@@ -210,27 +219,20 @@ def context_output(binding, progress, projects):
         "Keep the token out of research records and chat replies. "
         "Report unknowns explicitly and use only evidence authorized for the project. "
     )
-    if binding["job"]:
-        association = f"New records are associated with NAOME assignment {binding['job']}."
-    else:
-        association = "Research can be recorded in the local lab archive. No assignment is selected."
     context = (
-        f"{selection}{association} "
+        f"{selection}Research is stored in the local lab archive. "
         "If recording requires a lab selection, call select_lab with the intended workspace lab before working or recording. "
         "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill. "
-        "Follow the user and workspace instructions for permission to record and send evidence. "
+        "Follow the user and workspace instructions for permission to record evidence. "
         "A lab selection and binding token identify a destination and do not grant recording permission. "
-        "When recording is authorized, before substantive analysis or experiments, use record_research for separate "
+        "When recording is authorized, before substantive analysis or experiments, use capture_research for separate "
         "question and method entries, and for any relevant hypothesis. Record supported results and material limitations. "
-        "Use delivery=local unless assignment delivery is authorized. "
         "If recording is restricted or an approval is denied, continue the allowed work without retrying the write. "
         "Check the write result and report unresolved archive failures. "
         "For routine edits, maintenance and status checks, rely on automatic hook capture unless the user asks for a research record. "
         f"{reading}"
         f"Local archive pending: {progress['pending_local']}. "
-        f"Assigned reports pending submission: {progress['pending_reports']}. "
-        f"Across this chat's labs: {progress['chat_pending_local']} pending local writes and "
-        f"{progress['chat_pending_reports']} pending report submissions."
+        f"Across this chat's labs: {progress['chat_pending_local']} pending local writes."
     )
     return prompt_context(context)
 
@@ -240,29 +242,10 @@ def prompt_context(context):
 
 
 def hook(payload):
-    bridge = Bridge()
     event = payload.get("hook_event_name")
     session = payload.get("session_id")
     turn = payload.get("turn_id")
     if not all(isinstance(value, str) and 0 < len(value) <= 160 for value in (session, turn)):
-        return {}
-    project = bridge.project_at(payload.get("cwd"))
-    if not project:
-        if event == "UserPromptSubmit":
-            bridge.leave_project(session, turn)
-        return {}
-    if event == "UserPromptSubmit":
-        binding, issue = bridge.begin_turn(project, session, turn)
-        if not binding:
-            return prompt_context(f"{issue} Do not reuse a previous token.")
-        progress = bridge.flush(binding)
-        notice = schedule(bridge, binding) if binding["lab"] else None
-        response = context_output(binding, progress, bridge.project_catalog())
-        if notice:
-            response["systemMessage"] = notice
-        return response
-    binding = bridge.turn_binding(project, session, turn)
-    if not binding:
         return {}
     if event == "PostToolUse":
         name, call_id = payload.get("tool_name"), payload.get("tool_use_id")
@@ -271,6 +254,25 @@ def hook(payload):
             return {}
         if "naome" in name.lower() and "mcp" in name.lower():
             return {}
+    bridge = Bridge()
+    cwd = payload.get("cwd")
+    if event == "UserPromptSubmit":
+        project = bridge.project_at(cwd)
+        if not project:
+            bridge.leave_project(session, turn)
+            return {}
+        try:
+            binding, issue = bridge.begin_turn(project, session, turn)
+        except ValueError as error:
+            return prompt_context(str(error))
+        if not binding:
+            return prompt_context(f"{issue} Do not reuse a previous token.")
+        progress = bridge.flush(binding)
+        return context_output(binding, progress, bridge.project_catalog())
+    binding = bridge.turn_binding(cwd, session, turn)
+    if not binding:
+        return {}
+    if event == "PostToolUse":
         response = payload.get("tool_response")
         fields = {"codex_turn": turn, "tool_call_id": call_id, "tool_name": name,
                   "tool_input_sha256": digest(payload.get("tool_input")),
@@ -295,8 +297,8 @@ def hook(payload):
             bridge.archive(binding, offset, budget=0.8)
         else:
             progress = bridge.flush(binding)
-            if any(progress.get(key) for key in ("chat_pending_local", "chat_pending_reports", "local_retry", "report_retry")):
-                return {"systemMessage": "NAOME still has local records or assigned reports queued."}
+            if progress["chat_pending_local"] or progress.get("local_retry"):
+                return {"systemMessage": "NAOME still has local records queued."}
     return {}
 
 

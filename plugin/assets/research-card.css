@@ -81,6 +81,24 @@
 .naome-card dd { margin: 0; white-space: pre-wrap; }
 .naome-card ul { margin: 0; padding-inline-start: 17px; }
 .naome-card code { font-size: 12px; overflow-wrap: anywhere; }
+.naome-collection .naome-record-list { gap: 0; margin-top: 8px; }
+#collection-scope { margin: 0; font-weight: 600; }
+.naome-collection .naome-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 12px;
+  padding: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--naome-border);
+  border-radius: 0;
+}
+.naome-collection .naome-card-header { grid-column: 1; grid-row: 1; }
+.naome-collection .naome-card .naome-card-logo { display: none; }
+.naome-collection .naome-card-body { display: contents; }
+.naome-collection .naome-card-summary { grid-column: 2; grid-row: 1; align-self: center; }
+.naome-collection .naome-card-fields { grid-column: 1 / -1; grid-row: 2; margin: 6px 0 0; }
+.naome-collection .naome-search-notice { margin-inline: 0; }
+#collection-toggle { margin-top: 4px; }
 @media (pointer: coarse) {
   .naome-card-toggle { min-height: 44px; }
 }

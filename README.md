@@ -1,23 +1,18 @@
 # NAOME Codex
 
-NAOME Codex creates research projects and records work in their local NAOME lab archives. It uses the released `naome` CLI and Python 3.9 or later on macOS.
+NAOME Codex creates research projects and records, searches, and displays evidence in local NAOME Protocol archives. It uses the standalone [`nao` CLI](https://github.com/naome-core/naome-protocol/releases/tag/v0.1.6) and Python 3.9 or later on macOS.
 
 ## Create a project
 
-Ask Naome to create a project with a short name such as `calibration-study`. The `create_project` tool creates a fresh workspace under `~/Documents/NAOME Projects` and a lab directory under `~/Library/Application Support/NAOME Network/Projects`. It enrolls the workspace in the plugin configuration. You can then open the returned workspace in Codex and record evidence with trusted hooks.
-
-- The default **local** mode initializes an offline archive and leaves the node stopped. The lab can record evidence without network connectivity or a research assignment.
-- The optional **network** mode creates a dedicated lab and orchestrator with separate archives and peer identities. Both nodes run on the same computer and listen on loopback. Naome waits until they report a connection to each other. Afterward the orchestrator can assign work and receive evidence from its lab.
-
-The tool needs a working `naome` binary and no lab token. It preserves existing projects and refuses to take over an existing workspace or node directory. Repeating the same managed project name and mode returns its existing workspace, and restarts or checks the dedicated nodes in network mode. If network startup fails after enrollment, repeat the same request to retry the setup. The optional `provisioning.workspace_root` and `provisioning.node_root` settings in the plugin configuration override the parent directories for new projects.
+Ask Naome to create a project with a short name such as `calibration-study`. The `create_project` tool creates a workspace under `~/Documents/NAOME Projects`, initializes its `archive.sqlite` under `~/Library/Application Support/NAOME Codex/Archives`, and enrolls the workspace. Open the returned workspace in Codex to record evidence. Repeating the same managed project name returns the original workspace and archive. Optional `provisioning.workspace_root` and `provisioning.archive_root` settings override the parent directories.
 
 ## Use in Codex
 
-1. Enroll a local workspace and lab directory in `~/Library/Application Support/NAOME Codex/config.json`. The lab needs an initialized archive and a `node.json` with `"role":"lab"`. Local archival works with a stopped node, an empty peer list, or an unavailable orchestrator.
+1. Set the standalone `nao` executable in `~/Library/Application Support/NAOME Codex/config.json` or make it available on the plugin's PATH. To enroll an existing workspace, specify its working directory and the lab directory containing `archive.sqlite`.
 
    ```json
    {
-     "naome": "/absolute/path/to/naome",
+     "nao": "/absolute/path/to/nao",
      "projects": {
        "research-project": {
          "workspace": "/absolute/path/to/project",
@@ -27,58 +22,49 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
    }
    ```
 
-   Project keys also identify the archive scope and assignment project by default. To rename an enrollment, change its key and set `archive_scope` to its previous identifier so the existing archive, assignments, and chat routes remain accessible. A project without Git may use any dedicated directory. A Git enrollment also covers linked worktrees of the same repository. An optional `job` field restricts automatic association to that assignment.
+   To initialize an archive for manual enrollment, run `nao --db /absolute/path/to/lab/archive.sqlite init`. A project key also identifies its archive scope by default. To rename an enrollment, set `archive_scope` to the previous identifier so the archive, journal receipts, and chat routes stay accessible. Linked Git worktrees share their repository's enrollment.
 
-2. Add the repository as a local marketplace. Install **Naome** in Codex desktop, or use the installed CLI.
+2. Add the repository as a local marketplace. Install **Naome** in Codex desktop or use the Codex CLI.
 
    ```sh
    codex plugin marketplace add /absolute/path/to/naome-codex
    codex plugin add naome-codex@naome-local
    ```
 
-3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session inside the workspace. Each user message receives its own recorder context.
+3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session in the workspace.
 
-## Switch projects or labs in one chat
+### Upgrade existing projects
 
-Ask Codex which project or lab to read. For example, after looking up the latest record, ask “And in Naome Network?” Codex maps the request to the enrolled names supplied by the hook and passes them as `project` and `lab` arguments to `list_recent_research` or `search_research`. The plugin validates those arguments against its configuration. These arguments apply to that read. Evidence is recorded and submitted from the workspace where its project is enrolled.
+Keep the existing workspace and lab paths, archive files, search snapshots, and local journal. Install the standalone Protocol executable and set `nao` as shown above. Existing `archive.sqlite` files work at their original paths. Codex retains pending local writes at their original destinations. Historical report metadata remains in the journal, and the plugin no longer submits reports.
 
-### Multiple labs in a project
+### Switch projects or labs
 
-For a project with multiple labs, replace its `lab` path and optional `job` with `labs` and an optional `default_lab`:
+To read another project or lab, ask Codex to pass its enrolled names as `project` and `lab` arguments to the read tool. These arguments apply to that read. Codex records evidence in the project where the workspace is enrolled.
+
+For a project with multiple labs, replace `lab` with `labs` and optionally set `default_lab`.
 
 ```json
 {
   "workspace": "/absolute/path/to/project",
   "default_lab": "A",
   "labs": {
-    "A": {"directory": "/absolute/path/to/lab-a"},
-    "B": {"directory": "/absolute/path/to/lab-b"}
+    "A": {"directory": "/absolute/path/to/a"},
+    "B": {"directory": "/absolute/path/to/b"}
   }
 }
 ```
 
-A lab can have its own optional `job` and its own node and orchestrator configuration. To record in a specific lab, ask Codex to use it before starting the work. Codex calls `select_lab` with the workspace lab's name. When asked to keep using that lab in the chat, it also passes `remember: true`. In projects with multiple labs and no default, specify a lab for a read or select one before recording.
+To record in a particular lab, ask Codex to call `select_lab` before recording evidence. Use `remember: true` to keep the selection as that chat's default. The selected lab stays bound to that turn. Pending entries retain their original archive when another turn changes labs. If a lab is removed from the configuration, its entries remain queued until it is enrolled again.
 
-The hook starts the turn with the workspace project and any configured or remembered lab. Codex can select a different workspace lab before evidence is captured. Later hooks use the resulting turn route and its assigned report destination. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again.
+## Read and search records
 
-## List recent research records
+Use `list_recent_research` to see confirmed Codex research receipts from the selected lab, including earlier chats. It works without a search snapshot and skips automatic hook events and pending writes. Use `lookup_research` for text results during analysis. Omit `query` to read recent receipts with their stored details.
 
-Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the specified project and lab, including records from other chats in that project. It returns titles, categories, capture times, record IDs and short previews of the stored summaries. The cards also show the full stored summary on request. This read works offline without a search snapshot or embedding model and skips automatic hook events and pending writes. Use an approved lab snapshot to search records from other sources.
+For snapshot search, set `search_head` beside the single `lab` path or on the relevant entry in `labs`. Use an inventory whose records and dependencies may be indexed locally for that project. To include newer evidence, review and approve a newer snapshot. The plugin uses the configured snapshot and checks each returned link in the same project and snapshot.
 
-## Search an approved lab snapshot
+Use `search_research` to display matches, or supply a `query` to `lookup_research` during analysis. Search uses a question, keywords, or a complete Record ID and reports incomplete index coverage even when the current result is empty. The plugin reuses the native `nao --db FILE search-session` worker while its destination and runtime stay the same.
 
-Set `search_head` to a snapshot ID approved for the project. For a single-lab project, put it beside `lab`. For named labs, set it on the relevant entry in `labs`:
-
-```json
-{
-  "directory": "/absolute/path/to/lab-a",
-  "search_head": "<approved snapshot ID>"
-}
-```
-
-Approve an inventory whose records and dependencies may be indexed locally for that project. The plugin searches that exact snapshot in the requested lab and checks each returned link with an exact lookup in the same project and snapshot. To include newly archived material, review and approve a newer snapshot. Search returns the snapshot ID, coverage and, when available, source locations and short excerpts.
-
-`search_research` accepts a question, keywords, or a complete record ID. It reuses the native `naome archive search-session` worker while the destination and runtime stay the same, and works while the node is stopped. Exact IDs and lexical search work without a model. To enable hybrid and semantic ranking, set the paths in the local Naome Codex configuration:
+Exact IDs and keyword search work without a model. For hybrid or semantic search, set the model and optionally the Python path in the local configuration. Follow the [Protocol model setup](https://github.com/naome-core/naome-protocol/blob/v0.1.6/README.md#search-with-a-local-model).
 
 ```json
 {
@@ -89,40 +75,25 @@ Approve an inventory whose records and dependencies may be indexed locally for t
 }
 ```
 
-The Python field is optional and defaults to `python3`. Set up the checkpoint and inference environment using the [Network release guide](https://github.com/naome-core/naome-network/releases/tag/v0.4.0). With a model configured, natural-language searches default to hybrid ranking. Semantic and hybrid ranking use the existing local checkpoint. The native worker can update its derived search index during a query.
+## Capture and cards
 
-## Start a network when a Codex turn begins
-
-Set `"auto_start": true` on a project entry in the local Naome configuration to opt in. When a turn selects a network lab, Naome starts the local lab in a detached process. If the selected lab belongs to a dedicated local network created by `create_project`, the same worker also starts its matching orchestrator. A stopped node will be started again on the next matching turn while the option is enabled.
-
-Offline projects continue to use the local archive on their own. The hook does not wait for either node. Local records and already-known assignments remain usable during startup. Requests that start without an available assignment keep their evidence local. Startup diagnostics are written to `autostart.log` beside the plugin journal.
-
-## Capture and delivery
-
-- The recorder stores tool completion metadata and turn interruptions or stops. A tool receipt includes its observed identities, content digests, and available machine status. Full prompts, raw tool bodies, and transcripts stay outside this automatic capture.
-- Codex uses the local MCP tools to record questions, hypotheses, methods, observations, results, limitations, and linked corrections. The plugin packages research instructions that require evidence for findings. Hook coverage and agent participation determine which activities are recorded.
-- Each captured record is deposited with `naome archive put` as soon as possible. The local journal retains records if the archive CLI cannot acknowledge them. The MCP status reports archived record IDs and counts pending local writes and report submissions for both the selected lab and the whole chat.
-- Codex clients with inline MCP Apps support show a research card for a confirmed write, one or more recent receipts, and hits from an approved search snapshot. Select **more** to see the record ID and the details supplied by that operation. For writes these include the summary, sources, and linked records. Search hits show the approved snapshot and available excerpts and verified links. Recent receipts show the capture time and preserve the same scope without a snapshot. The tools also return text results for clients without cards.
-- Follow the current user and workspace instructions for recording and submitting evidence. Set `delivery` to `local` for an authorized local-only entry. This keeps it out of assignment reports even when a job is active. The default `assigned` behavior can submit to the configured orchestrator. If host approval is denied, continue the permitted work and retry the write only after new authorization.
-- A uniquely ready assignment enables optional reporting for subsequent records. An ambiguous assignment leaves capture local. Previously unassigned records stay in the lab archive. The bridge sends assigned records through ordered `naome research stream` segments and retries the exact segments after an ambiguous acknowledgment. The lab node handles replication to the orchestrator.
-- Use approved material for the pilot. Version 0.2.0 gives inline lab stream records the REP public descriptor. A correction entry documents a revised finding and links its original record. REP policy and admitted notices govern formal reassessment.
-
-The plugin source and local Git history contain no lab data or keys. The enrollment and journal live in the local Application Support directory.
+- The recorder stores tool completion metadata and turn interruptions or stops. It records identities, content digests, and available machine status. Full prompts, raw tool bodies, and transcripts stay outside automatic capture.
+- Codex can record questions, hypotheses, methods, observations, results, limitations, and linked corrections with permission. Records are written with `nao put` and acknowledged in the local journal. If the CLI cannot acknowledge a record, the journal retains it for retry.
+- A single result appears as a detailed card. Multiple results appear as a compact list with up to three rows initially. Expand the list for all rows and select **more** on a record for the ID and available details.
+- Use `record_research` to display a confirmed write. Use `capture_research` for a short text receipt, `research_status` to see pending writes, and `retry_research_delivery` to retry them locally. Both write tools use the same journal.
+- The repository contains synthetic integration fixtures. User archives, configuration, and the journal remain on the local machine.
 
 ## Verify
 
-The tested Network version, its bundled Protocol version, and the SHA-256 checksum for the `naome-macos-arm64` release asset are pinned in [tests/naome-release.json](tests/naome-release.json). For a release update, set those values in that file. CI uses the pin to download and verify the binary, and the integration test checks the installed versions against the same pin.
-
-Run the tests with the pinned `naome` release in `~/.cargo/bin/naome`, or set `NAOME_TEST_BINARY` to the verified executable.
+The tested Protocol release and SHA-256 checksum of its macOS arm64 archive are pinned in [tests/naome-release.json](tests/naome-release.json). Set `NAO_TEST_BINARY` to the verified executable or install it at `~/.cargo/bin/nao`.
 
 ```sh
 python3 tests/integration.py
 python3 tests/archive_search.py
 python3 tests/turn_routing.py
 python3 tests/project_setup.py
-python3 tests/autostart.py
+python3 tests/legacy_archives.py
+node tests/research_card.mjs
 ```
 
-The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, reads across two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, explicit selection without a default, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries. The autostart test keeps both nodes stopped while writing and reading a record, then verifies that they start and connect without starting a second pair.
-
-The search integration test exercises snapshot approval and revocation, project-scoped link lookups, and native worker reuse with stopped labs. Set `NAOME_TEST_SEARCH_MODEL` and optionally `NAOME_TEST_SEARCH_PYTHON` to include real semantic and hybrid queries.
+The tests use isolated archives, including two SQLite archives produced by the prior release. The upgrade test checks existing Record and Snapshot IDs, journal receipts, and new writes and searches in both archives. Set `NAOME_TEST_SEARCH_MODEL` and optionally `NAOME_TEST_SEARCH_PYTHON` to exercise real semantic and hybrid queries.

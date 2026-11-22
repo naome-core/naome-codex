@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from bridge import Bridge, DeliveryError, ID, encode
+from bridge import Bridge, DeliveryError, ID, archive_command, encode, wrong_cli
 
 MODES = ("auto", "lexical", "semantic", "hybrid")
 QUERY_LIMIT = 1200
@@ -18,6 +18,19 @@ INDEX_BUDGET = 32
 VECTOR_BUDGET = 5000
 RESPONSE_LIMIT = 128 * 1024
 COVERAGE = ("index_complete", "semantic_index_complete", "limited_coverage", "vector_budget_exhausted", "query_limited")
+
+
+def missing_search_session(executable, directory):
+    try:
+        probe = subprocess.run(
+            archive_command(executable, directory, "search-session", "--help"),
+            cwd=directory, capture_output=True, timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode != 0 and any(
+        message in probe.stderr for message in (b"unrecognized subcommand 'search-session'", b"unexpected argument '--db'")
+    )
 
 
 class SearchSession:
@@ -66,7 +79,7 @@ class SearchSession:
         try:
             # A plugin reinstall can remove the server's original working directory.
             self.process = subprocess.Popen(
-                [executable, "--directory", binding["lab"], "--json", "archive", "search-session"],
+                archive_command(executable, binding["lab"], "search-session"),
                 cwd=binding["lab"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=0, start_new_session=True, env=env,
@@ -108,7 +121,10 @@ class SearchSession:
             self.close()
             raise DeliveryError("The local NAOME search timed out.") from error
         except (OSError, ValueError, KeyError) as error:
+            executable, _, directory, *_ = self.destination
             self.close()
+            if missing_search_session(executable, directory):
+                raise DeliveryError(wrong_cli(executable)) from error
             raise DeliveryError("The local NAOME search session did not return a valid result.") from error
 
 
@@ -142,14 +158,15 @@ def search_research(bridge, binding, arguments, session):
            for value in (model, python)):
         raise ValueError("Search model and Python paths must be absolute.")
     query = query.strip()
-    if ID.fullmatch(query):
+    exact = ID.fullmatch(query) is not None
+    if exact:
         mode = "lexical"
     elif mode == "auto":
         mode = "hybrid" if model else "lexical"
     if mode != "lexical" and not model:
         raise DeliveryError("Configure a local search.model to run semantic or hybrid search.")
     deadline = time.monotonic() + TIMEOUT
-    session.connect(bridge.naome, binding, head, model, python)
+    session.connect(bridge.nao, binding, head, model, python)
     report = session.find(head, scope, query, mode, limit, deadline, prepare=mode != "lexical")
 
     candidates = [hit for hit in report["hits"] if matches_scope(hit, scope)]
@@ -165,10 +182,10 @@ def search_research(bridge, binding, arguments, session):
             if not isinstance(target, str) or not ID.fullmatch(target):
                 continue
             if target not in verified:
-                exact = session.find(head, scope, target, "lexical", 1, deadline)
+                lookup = session.find(head, scope, target, "lexical", 1, deadline)
                 verified[target] = any(
                     matches_scope(match, scope) and match["id"] == target and match.get("exact_id") is True
-                    for match in exact["hits"]
+                    for match in lookup["hits"]
                 )
             if verified[target]:
                 links.append({"role": link["role"], "target": target})
@@ -190,5 +207,12 @@ def search_research(bridge, binding, arguments, session):
     if not current_lab or current_lab.get("search_head") != head:
         session.close()
         raise DeliveryError("The approved search snapshot changed while the query was running.")
-    return {"project": selected["project_name"], "lab": binding["lab_name"], "head": head, "mode": mode, "hits": hits,
+    coverage = "complete"
+    if not exact and (report["index_complete"] is False
+                      or (mode != "lexical" and report["semantic_index_complete"] is False)):
+        coverage = "index_incomplete"
+    elif any(report[key] is True for key in ("limited_coverage", "vector_budget_exhausted", "query_limited")):
+        coverage = "limited"
+    return {"project": selected["project_name"], "lab": selected["lab_name"], "head": head, "mode": mode, "hits": hits,
+            "coverage": coverage,
             **{key: report[key] for key in COVERAGE}}

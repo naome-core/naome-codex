@@ -1,0 +1,52 @@
+{
+  "alpha": {
+    "record": "1:0:8be061366519577a732e7b84684095f8b89c7e9d79d8ba495262f6ec231e1319",
+    "snapshot": "1:1:d99b6e591d9e57a4821d799efe6bb2739c17bf8c420a04ac3fcdc6726f715c5f",
+    "event": "research:legacy-alpha",
+    "title": "Legacy alpha record",
+    "document": {
+      "fields": {
+        "category": "result",
+        "codex_session": "legacy-alpha",
+        "codex_turn": "original",
+        "event_key": "research:legacy-alpha",
+        "recorded_by": "Codex MCP",
+        "sources": [
+          "Synthetic calibration reading"
+        ],
+        "summary": "The archived alpha detector was recalibrated."
+      },
+      "inputs": [],
+      "kind": "derivation",
+      "scope": "fixture",
+      "subject": "Legacy alpha record"
+    },
+    "captured_at": "2026-01-01 00:00:00",
+    "job": null
+  },
+  "beta": {
+    "record": "1:0:2df06ebae009100cf5cba552c4034a31d6ff138fd400e0c22c61ea0418317de1",
+    "snapshot": "1:1:35b535ddb1e810cfffeeba87b5cd20124c21a659da263a8bee2831f666a6463c",
+    "event": "research:legacy-beta",
+    "title": "Legacy beta record",
+    "document": {
+      "fields": {
+        "category": "result",
+        "codex_session": "legacy-beta",
+        "codex_turn": "original",
+        "event_key": "research:legacy-beta",
+        "recorded_by": "Codex MCP",
+        "sources": [
+          "Synthetic calibration reading"
+        ],
+        "summary": "The archived beta detector was recalibrated."
+      },
+      "inputs": [],
+      "kind": "derivation",
+      "scope": "fixture",
+      "subject": "Legacy beta record"
+    },
+    "captured_at": "2026-01-01 00:00:00",
+    "job": "historical-assignment"
+  }
+}
