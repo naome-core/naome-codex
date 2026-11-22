@@ -10,6 +10,7 @@ URI = "ui://naome/research-card-v2.html"
 LEGACY_URI = "ui://naome/research-card-v1.html"
 MIME_TYPE = "text/html;profile=mcp-app"
 DETAILS_KEY = "naome/research-block"
+RECENT_SUMMARIES_KEY = "naome/research-summaries"
 RESOURCE = {"uri": URI, "name": "Naome research block", "mimeType": MIME_TYPE}
 TOOL_META = {"ui": {"resourceUri": URI}, "openai/ui": {"preferredModelDisplayMode": "inline"}}
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -46,10 +47,26 @@ def card_data(receipt, category, title, fields, references):
     if not isinstance(record_id, str) or not ID.fullmatch(record_id):
         return {}
     summary = fields["summary"]
-    preview = summary if len(summary) <= 160 else summary[:159].rstrip() + "…"
     return {
         "structuredContent": {"record_id": record_id, "title": title, "category": category,
-                              "lab": receipt["lab"], "summary": preview},
+                              "lab": receipt["lab"], "summary": summary_preview(summary)},
         "_meta": {DETAILS_KEY: {"record_id": record_id, "summary": summary, "sources": fields["sources"],
                                "linked_records": references}},
     }
+
+
+def recent_card_data(receipts):
+    records = []
+    summaries = {}
+    for receipt in receipts:
+        record = receipt.copy()
+        summary = record.pop("summary")
+        if isinstance(summary, str) and summary.strip():
+            record["preview"] = summary_preview(summary)
+            summaries[record["record_id"]] = summary
+        records.append(record)
+    return records, summaries
+
+
+def summary_preview(summary):
+    return summary if len(summary) <= 160 else summary[:159].rstrip() + "…"

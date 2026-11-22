@@ -17,8 +17,10 @@ const written = {
 };
 const recent = {
   structuredContent: { project: 'calibration', lab: 'A', source: 'codex_archive_receipts',
-    records: [{ record_id: record, title: 'Latest result', category: 'result', captured_at: captured },
+    records: [{ record_id: record, title: 'Latest result', category: 'result', captured_at: captured,
+      preview: 'Saved summary preview' },
       { record_id: linked, title: 'Earlier method', category: 'method' }] },
+  _meta: { 'naome/research-summaries': { [record]: 'The full saved summary' } },
 };
 const searched = {
   structuredContent: { project: 'calibration', lab: 'A', head, query_limited: true,
@@ -64,10 +66,13 @@ function widget(locale) {
   results.getBoundingClientRect = () => ({height: results.hidden ? 0 : records.children
     .reduce((sum, card) => sum + (card.querySelector('dl').hidden ? 75 : 180), notice.hidden ? 0 : 24)});
   let resize;
-  const document = { getElementById: (id) => nodes[id], createElement: node, documentElement: {style: {}} };
+  const styles = new Map();
+  const style = { setProperty: (key, value) => styles.set(key, value), removeProperty: (key) => styles.delete(key) };
+  const document = { getElementById: (id) => nodes[id], createElement: node, documentElement: {style} };
   runInNewContext(script, {
     window: { parent, addEventListener: (name, listener) => events.set(name, listener) },
     document,
+    CSS: { supports: (property, value) => property === 'color' && /^#[a-f0-9]{6}$/.test(value) },
     ResizeObserver: class {
       constructor(callback) { resize = callback; }
       observe() {}
@@ -82,7 +87,7 @@ function widget(locale) {
   deliver({ id: 1, result: { hostContext: { locale, theme: 'dark' } } });
   assert.equal(messages[1].method, 'ui/notifications/initialized');
   assert.equal(document.documentElement.style.colorScheme, 'dark');
-  return { results, records, notice, deliver, receive, resize, messages,
+  return { results, records, notice, deliver, receive, resize, messages, styles, style,
     card: (index = 0) => records.children[index].querySelector,
     click: (index = 0) => records.children[index].querySelector('button').listeners.click() };
 }
@@ -125,7 +130,12 @@ view.receive(recent);
 const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(captured));
 assert.equal(view.card()('h2').textContent, 'Latest result');
 assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A · ' + date);
+assert.equal(view.card()('.naome-card-summary').textContent, 'Saved summary preview');
+view.click();
+assert.equal(details(view.card()).Zusammenfassung, 'The full saved summary');
 assert.equal(view.card()('.naome-card-summary').hidden, true);
+view.click();
+assert.equal(view.card()('.naome-card-summary').hidden, false);
 assert.equal(view.card(1)('h2').textContent, 'Earlier method');
 assert.notEqual(view.card()('button').attributes['aria-controls'], view.card(1)('button').attributes['aria-controls']);
 view.click(1);
@@ -134,6 +144,14 @@ assert.deepEqual(details(view.card()), {});
 view.click(1);
 assert.deepEqual(details(view.card(1)), {});
 assert.equal(view.notice.hidden, true);
+view.deliver({ method: 'ui/notifications/host-context-changed', params: {
+  theme: 'light', styles: { variables: { '--color-text-primary': '#123456',
+    '--color-border-secondary': 'url(bad)', '--unknown': '#000000' } },
+} });
+assert.equal(view.style.colorScheme, 'light');
+assert.deepEqual([...view.styles], [['--color-text-primary', '#123456']]);
+view.deliver({ method: 'ui/notifications/host-context-changed', params: { styles: { variables: {} } } });
+assert.equal(view.styles.size, 0);
 
 const replay = widget();
 replay.receive(searched);

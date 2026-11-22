@@ -340,6 +340,7 @@ class Bridge:
                 "record_id": row["record"], "title": document["subject"],
                 "category": document["fields"]["category"],
                 "captured_at": row["captured_at"].replace(" ", "T") + "Z",
+                "summary": document["fields"].get("summary"),
             })
         return receipts
 

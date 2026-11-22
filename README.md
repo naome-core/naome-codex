@@ -59,7 +59,7 @@ Turn routing fixes the local archive and any report assignment when the user mes
 
 ## List recent research records
 
-Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the current project and selected lab, including records from other chats in that project. It returns titles, categories, capture times and record IDs. It skips automatic hook events and pending writes. This read works offline without a search snapshot or embedding model. For content and records from other sources, query an approved lab snapshot.
+Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the current project and selected lab, including records from other chats in that project. It returns titles, categories, capture times, record IDs and short previews of the stored summaries. The cards also show the full stored summary on request. This read works offline without a search snapshot or embedding model and skips automatic hook events and pending writes. Use an approved lab snapshot to search records from other sources.
 
 ## Search an approved lab snapshot
 

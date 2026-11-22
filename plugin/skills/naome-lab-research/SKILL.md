@@ -15,7 +15,7 @@ The lab binding identifies the destination. Follow the user's request and worksp
 
 ## Find prior lab evidence
 
-Use `list_recent_research` when asked what was recorded most recently. It lists receipts for explicit Naome Codex research records confirmed by the selected lab, across chats in the current project. It returns the title, category, capture time and record ID without a search snapshot. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
+Use `list_recent_research` when asked what was recorded most recently. Request one record for the latest entry. It lists receipts for explicit Naome Codex research records confirmed by the selected lab, across chats in the current project. It returns the title, category, capture time, record ID and a short preview of the stored summary without a search snapshot. The full stored summary is available in the card details. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
 
 When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
 

@@ -221,14 +221,20 @@ def main():
         recent_result = call_tool("list_recent_research", reader, limit=10)
         assert not recent_result["isError"], recent_result
         recent = json.loads(recent_result["content"][0]["text"])
-        assert recent_result["structuredContent"] == recent and "_meta" not in recent_result
+        assert recent_result["structuredContent"] == recent
+        assert recent_result["_meta"] == {"naome/research-summaries": {
+            record: summary.strip(), origin: "The archive is available locally.",
+        }}
         assert (recent["project"], recent["lab"], recent["source"]) == (
             "repo-research", "default", "codex_archive_receipts")
         assert [item["record_id"] for item in recent["records"]] == [record, origin]
         assert recent["records"][0] == {
             "record_id": record, "title": "Offline readback", "category": "result",
             "captured_at": archived["fields"]["captured_at"],
+            "preview": card["summary"],
         }
+        assert summary.strip() not in json.dumps(recent)
+        assert sources[0] not in json.dumps(recent_result)
         assert json.loads(tool("list_recent_research", reader)[1])["records"] == recent["records"][:1]
         assert tool("list_recent_research", reader, limit=True)[0]
         assert tool("list_recent_research", reader, lab="other")[0]

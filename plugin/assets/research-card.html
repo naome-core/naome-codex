@@ -79,9 +79,12 @@
       const data = result?.structuredContent;
       if (result?.isError || typeof data?.lab !== 'string') return [];
       if (data.source === 'codex_archive_receipts' && Array.isArray(data.records)) {
+        const summaries = result?._meta?.['naome/research-summaries'];
         return data.records.filter(record => isId(record?.record_id) && typeof record.title === 'string')
           .map(record => ({ recordId: record.record_id, title: record.title, category: record.category,
-            lab: data.lab, capturedAt: record.captured_at, fields: { project: data.project } }));
+            lab: data.lab, capturedAt: record.captured_at,
+            preview: typeof record.preview === 'string' ? record.preview : '',
+            fields: { summary: summaries?.[record.record_id], project: data.project } }));
       }
       if (isId(data.head) && Array.isArray(data.hits)) {
         return data.hits.filter(hit => isId(hit?.record_id)).map(hit => {
@@ -157,6 +160,7 @@
       const card = { entry, element, heading, context, toggle, details };
       toggle.addEventListener('click', () => {
         details.hidden = !details.hidden;
+        preview.hidden = !entry.preview || (!details.hidden && Boolean(entry.fields.summary || entry.fields.excerpt));
         toggle.setAttribute('aria-expanded', String(!details.hidden));
         if (details.hidden) details.replaceChildren();
         updateCard(card);
@@ -166,7 +170,13 @@
       return card;
     }
 
-    function applyHostContext({ locale: hostLocale, theme } = {}) {
+    const hostStyles = {
+      '--color-text-primary': 'color', '--color-text-secondary': 'color',
+      '--color-border-secondary': 'color', '--color-background-secondary': 'color',
+      '--font-sans': 'font-family', '--border-radius-lg': 'border-radius', '--border-radius-full': 'border-radius'
+    };
+
+    function applyHostContext({ locale: hostLocale, theme, styles } = {}) {
       if (typeof hostLocale === 'string') {
         const language = /^de(?:-|$)/i.test(hostLocale) ? 'de' : 'en';
         try {
@@ -182,6 +192,14 @@
         cards.forEach(updateCard);
       }
       if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
+      if (styles !== undefined) {
+        const style = document.documentElement.style;
+        for (const [name, property] of Object.entries(hostStyles)) {
+          const value = styles?.variables?.[name];
+          if (typeof value === 'string' && CSS.supports(property, value)) style.setProperty(name, value);
+          else style.removeProperty(name);
+        }
+      }
     }
 
     function showResult(result) {

@@ -1,29 +1,31 @@
+:root {
+  --naome-text: var(--color-text-primary, light-dark(#242528, #ececef));
+  --naome-muted: var(--color-text-secondary, light-dark(#565962, #b5b8c0));
+  --naome-border: var(--color-border-secondary, light-dark(#e0e2e7, #44464e));
+  --naome-hover: var(--color-background-secondary, light-dark(#eff0f3, #242528));
+  --naome-font: var(--font-sans, system-ui, sans-serif);
+}
 .naome-record-list {
   display: grid;
   gap: 8px;
 }
 .naome-search-notice {
   margin: 6px 12px 0;
-  color: var(--color-text-secondary, light-dark(#565962, #b5b8c0));
-  font: 12px/1.4 system-ui, sans-serif;
+  color: var(--naome-muted);
+  font: 12px/1.4 var(--naome-font);
 }
 .naome-card {
-  --naome-surface: light-dark(#fafafb, #242528);
-  --naome-text: var(--color-text-primary, light-dark(#242528, #ececef));
-  --naome-muted: var(--color-text-secondary, light-dark(#565962, #b5b8c0));
-  --naome-border: light-dark(#e6e7eb, #3c3e44);
-  --naome-hover: light-dark(#eff0f3, #34363b);
   --naome-logo-size: 18px;
   --naome-logo-gap: 8px;
   --naome-text-inset: calc(var(--naome-logo-size) + var(--naome-logo-gap));
   box-sizing: border-box;
-  background: var(--naome-surface);
+  background: transparent;
   color: var(--naome-text);
   border: 1px solid var(--naome-border);
-  border-radius: 16px;
+  border-radius: var(--border-radius-lg, 16px);
   padding: 10px 12px;
   overflow-wrap: anywhere;
-  font: 14px/1.4 system-ui, sans-serif;
+  font: 14px/1.4 var(--naome-font);
 }
 .naome-card-top {
   display: flex;
@@ -68,8 +70,8 @@
   max-inline-size: 44%;
   padding: 2px 8px;
   border: 1px solid var(--naome-border);
-  border-radius: 999px;
-  background: var(--naome-surface);
+  border-radius: var(--border-radius-full, 999px);
+  background: transparent;
   color: var(--naome-muted);
   font: inherit;
   font-size: 12px;

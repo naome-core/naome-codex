@@ -12,7 +12,9 @@ from archive_search import MAX_HITS, MODES, QUERY_LIMIT, SearchSession, search_r
 from autostart import schedule
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 from project import PROJECT, create_project
-from research_card import RESOURCE, TOOL_META, ResourceNotFound, card_data, read_resource
+from research_card import (
+    RECENT_SUMMARIES_KEY, RESOURCE, TOOL_META, ResourceNotFound, card_data, read_resource, recent_card_data,
+)
 
 ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired)
 INPUT_LIMIT = 8 * 1024 * 1024
@@ -47,12 +49,13 @@ TOOLS = [
          TOKENS, ["binding_token"], annotations=READ_ONLY),
     tool("list_recent_research", "List the latest explicitly recorded Naome Codex research receipts across chats "
          "for the current project and selected lab. Use for requests about what was recorded most recently. "
-         "Returns titles, categories, capture times and IDs confirmed by the local archive. "
+         "Returns titles, categories, capture times, summaries and IDs for confirmed local research records. "
          "Nonempty results have an inline card. Excludes automatic hook events and pending writes. "
          "Works without a search snapshot or model.",
          {
              **TOKENS,
-             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RECENT_RECORDS, "default": 1},
+             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RECENT_RECORDS, "default": 1,
+                       "description": "Use one for the latest record. Increase this only for requests for multiple records."},
          }, ["binding_token"], _meta=TOOL_META, annotations=READ_ONLY),
     tool("search_research", "Search the current project's approved snapshot in the selected local lab. "
          "Uses the native archive search and may prepare its local derived index. Returns scoped records, "
@@ -114,9 +117,12 @@ def do_tool(name, arguments, search):
         if not (arguments.keys() <= {"binding_token", "limit"}
                 and type(limit) is int and 1 <= limit <= MAX_RECENT_RECORDS):
             raise ValueError("Invalid recent research arguments.")
-        records = bridge.recent_research(binding, limit)
-        return tool_result({"project": binding["project"], "lab": binding["lab_name"],
-                            "source": "codex_archive_receipts", "records": records}, card=bool(records))
+        records, summaries = recent_card_data(bridge.recent_research(binding, limit))
+        reply = tool_result({"project": binding["project"], "lab": binding["lab_name"],
+                             "source": "codex_archive_receipts", "records": records}, card=bool(records))
+        if summaries:
+            reply["_meta"] = {RECENT_SUMMARIES_KEY: summaries}
+        return reply
     if name == "search_research":
         result = search_research(bridge, binding, arguments, search)
         return tool_result(result, card=bool(result["hits"]))
