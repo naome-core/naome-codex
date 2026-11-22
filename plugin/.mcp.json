@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "naome-lab": {
-      "command": "/usr/bin/python3",
+      "command": "./entry.py",
       "args": [
-        "./entry.py",
         "mcp"
       ],
       "cwd": "."

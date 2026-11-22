@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """Codex hook handler and local stdio MCP tools for the NAOME research lab."""
 
 import json

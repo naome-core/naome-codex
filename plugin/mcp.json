@@ -3,9 +3,8 @@
   "mcpServers": {
     "naome-lab": {
       "type": "stdio",
-      "command": "/usr/bin/python3",
+      "command": "./entry.py",
       "args": [
-        "${PLUGIN_ROOT}/entry.py",
         "mcp"
       ],
       "cwd": "${PLUGIN_ROOT}"
