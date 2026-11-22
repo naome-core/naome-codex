@@ -1,0 +1,11 @@
+{
+  "name": "naome-local",
+  "interface": {"displayName": "NAOME Local"},
+  "plugins": [
+    {
+      "name": "naome-codex",
+      "source": {"source": "local", "path": "./"},
+      "interface": {"displayName": "NAOME Research Lab"}
+    }
+  ]
+}

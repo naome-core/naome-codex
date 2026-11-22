@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "naome-lab": {
+      "type": "stdio",
+      "command": "/usr/bin/python3",
+      "args": ["${PLUGIN_ROOT}/entry.py", "mcp"]
+    }
+  }
+}
