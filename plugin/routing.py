@@ -1,58 +1,9 @@
-"""Resolve project and lab selections from the user prompt."""
+"""Validate enrolled lab names and resolve explicit lab arguments."""
 
 import re
 from pathlib import Path
 
 NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}"
-PROJECT_DIRECTIVE = re.compile(r"^/project\b", re.I)
-PROJECT_SELECTION = re.compile(rf"/project\s+({NAME})", re.I)
-PROJECT_FOLLOW_UP = re.compile(rf"(?:(?:und|and)[ \t]+)?(?:in|im)[ \t]+({NAME}(?:[ \t]+{NAME})*)[.!?]?", re.I)
-PROJECT_NAME_SEPARATOR = re.compile(r"[-_\s]+")
-NAOME_MENTION = re.compile(r"\[@Naome\]\(plugin://naome-codex@naome-local\)", re.I)
-CURRENT = re.compile(
-    rf"(?:/lab\s+({NAME})|für diesen schritt bitte labor\s+({NAME})\s+verwenden"
-    rf"|use lab\s+({NAME})\s+for this turn)[.!]?", re.IGNORECASE,
-)
-PERSISTENT = re.compile(
-    rf"(?:/lab\s+default\s+({NAME})|ab jetzt labor\s+({NAME})(?:\s+verwenden)?"
-    rf"|use lab\s+({NAME})\s+from now on)[.!]?", re.IGNORECASE,
-)
-DIRECTIVE = re.compile(r"^(?:/lab\b|für diesen schritt bitte labor\b|ab jetzt labor\b|use lab\b)", re.I)
-MENTION = re.compile(
-    rf"\blab(?:ore?|s)?\s+({NAME}(?:(?:\s+(?:and|or|und|oder)\s+|\s*[,/]\s*)(?:lab(?:or)?\s+)?{NAME})*)",
-    re.IGNORECASE,
-)
-
-
-def choose_project(prompt, projects, workspace_project):
-    """Select a project for this turn and leave the remainder for lab routing."""
-    request = prompt.strip()
-    if request.startswith("# Applications mentioned by the user:") and "\n## My request:\n" in request:
-        request = request.split("\n## My request:\n", 1)[1]
-    request = NAOME_MENTION.sub("", request).strip()
-    first, _, remaining = request.partition("\n")
-    if PROJECT_DIRECTIVE.match(first):
-        selection = PROJECT_SELECTION.fullmatch(first.strip())
-        if not selection or PROJECT_DIRECTIVE.match(remaining.lstrip()):
-            return None, "", "Use one `/project <name>` directive on the first line."
-        project = projects.get(selection[1].casefold())
-        if not project:
-            return None, "", "The selected Naome project is not enrolled."
-        return project, remaining, None
-
-    follow_up = PROJECT_FOLLOW_UP.fullmatch(request)
-    if follow_up:
-        name = follow_up[1].casefold()
-        if name in projects:
-            return projects[name], "", None
-        normalized = PROJECT_NAME_SEPARATOR.sub("-", name)
-        matches = {scope for label, scope in projects.items()
-                   if PROJECT_NAME_SEPARATOR.sub("-", label) == normalized}
-        if len(matches) == 1:
-            return matches.pop(), "", None
-        if matches:
-            return None, "", "The project name is ambiguous. Use `/project <name>` with an exact enrolled name."
-    return workspace_project, request, None
 
 
 def configured_labs(project):
@@ -79,25 +30,7 @@ def configured_labs(project):
     return resolved, default.casefold() if default else next(iter(resolved)) if len(resolved) == 1 else None
 
 
-def choose_lab(prompt, labs, default):
-    lines = prompt.strip().splitlines()
-    first = lines[0].strip() if lines else ""
-    if DIRECTIVE.match(first):
-        if len(lines) > 1 and DIRECTIVE.match(lines[1].strip()):
-            return None, False, "This turn contains more than one lab selection."
-        persistent = PERSISTENT.fullmatch(first)
-        match = persistent or CURRENT.fullmatch(first)
-        if not match:
-            return None, False, "The lab selection is incomplete or ambiguous."
-        name = next(group for group in match.groups() if group).casefold()
-        if name not in labs:
-            return None, False, "The selected lab is not configured for this project."
-        return labs[name], persistent is not None, None
-
-    mentions = {
-        name.casefold() for match in MENTION.finditer(prompt)
-        for name in re.findall(NAME, match[1]) if name.casefold() in labs
-    }
-    if default is None or mentions - {default}:
-        return None, False, "This turn has no unambiguous destination lab."
-    return labs[default], False, None
+def named_lab(labs, name):
+    if not isinstance(name, str) or name.casefold() not in labs:
+        raise ValueError("The specified lab is not enrolled in this project.")
+    return labs[name.casefold()]

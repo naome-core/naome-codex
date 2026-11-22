@@ -40,9 +40,7 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
 
 ## Switch projects or labs in one chat
 
-In a chat from an enrolled workspace, put `/project <name>` on the first line to read another enrolled project for that turn. Put an optional `/lab <name>` on the next line to select one of that project's labs, then write the request. A short follow-up such as `and in naome-network` or `und im naome network?` also selects a known project for the turn. Use the explicit command when a spoken or spaced name matches several enrolled names.
-
-Cross-workspace selection supports recent records and approved searches. The next turn uses the workspace project unless it selects another project again. Record and submit evidence from the workspace where that project is enrolled.
+Ask Codex which project or lab to read. For example, after looking up the latest record, ask “And in Naome Network?” Codex maps the request to the enrolled names supplied by the hook and passes them as `project` and `lab` arguments to `list_recent_research` or `search_research`. The plugin validates those arguments against its configuration. These arguments apply to that read. Evidence is recorded and submitted from the workspace where its project is enrolled.
 
 ### Multiple labs in a project
 
@@ -59,13 +57,13 @@ For a project with multiple labs, replace its `lab` path and optional `job` with
 }
 ```
 
-A lab can have its own optional `job` and its own node and orchestrator configuration. Put `/lab B` on the first line to select B for the current turn, or `/lab default B` to select B now and set it as this chat’s default. The equivalent leading sentences `Use Lab B for this turn` and `Use Lab B from now on` also work. Place the task on the following lines. A bare reference to another configured lab or a comparison of labs leaves the destination open unless the prompt explicitly selects one. When several labs are configured and the project has no default, start by selecting one.
+A lab can have its own optional `job` and its own node and orchestrator configuration. To record in a specific lab, ask Codex to use it before starting the work. Codex calls `select_lab` with the workspace lab's name. When asked to keep using that lab in the chat, it also passes `remember: true`. In projects with multiple labs and no default, specify a lab for a read or select one before recording.
 
-Turn routing fixes the local archive and any report assignment when the user message is admitted. Later hooks use that turn’s route. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again. Single-lab configuration and existing journal entries are supported.
+The hook starts the turn with the workspace project and any configured or remembered lab. Codex can select a different workspace lab before evidence is captured. Later hooks use the resulting turn route and its assigned report destination. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again.
 
 ## List recent research records
 
-Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the current project and selected lab, including records from other chats in that project. It returns titles, categories, capture times, record IDs and short previews of the stored summaries. The cards also show the full stored summary on request. This read works offline without a search snapshot or embedding model and skips automatic hook events and pending writes. Use an approved lab snapshot to search records from other sources.
+Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the specified project and lab, including records from other chats in that project. It returns titles, categories, capture times, record IDs and short previews of the stored summaries. The cards also show the full stored summary on request. This read works offline without a search snapshot or embedding model and skips automatic hook events and pending writes. Use an approved lab snapshot to search records from other sources.
 
 ## Search an approved lab snapshot
 
@@ -78,7 +76,7 @@ Set `search_head` to a snapshot ID approved for the project. For a single-lab pr
 }
 ```
 
-Approve an inventory whose records and dependencies may be indexed locally for that project. The plugin searches that exact snapshot in the lab selected for the current turn and checks each returned link with an exact lookup in the same project and snapshot. To include newly archived material, review and approve a newer snapshot. Search returns the snapshot ID, coverage and, when available, source locations and short excerpts.
+Approve an inventory whose records and dependencies may be indexed locally for that project. The plugin searches that exact snapshot in the requested lab and checks each returned link with an exact lookup in the same project and snapshot. To include newly archived material, review and approve a newer snapshot. Search returns the snapshot ID, coverage and, when available, source locations and short excerpts.
 
 `search_research` accepts a question, keywords, or a complete record ID. It reuses the native `naome archive search-session` worker while the destination and runtime stay the same, and works while the node is stopped. Exact IDs and lexical search work without a model. To enable hybrid and semantic ranking, set the paths in the local Naome Codex configuration:
 
@@ -125,6 +123,6 @@ python3 tests/project_setup.py
 python3 tests/autostart.py
 ```
 
-The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries. The autostart test keeps both nodes stopped while writing and reading a record, then verifies that they start and connect without starting a second pair.
+The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, reads across two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, explicit selection without a default, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries. The autostart test keeps both nodes stopped while writing and reading a record, then verifies that they start and connect without starting a second pair.
 
 The search integration test exercises snapshot approval and revocation, project-scoped link lookups, and native worker reuse with stopped labs. Set `NAOME_TEST_SEARCH_MODEL` and optionally `NAOME_TEST_SEARCH_PYTHON` to include real semantic and hybrid queries.

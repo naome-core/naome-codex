@@ -9,13 +9,15 @@ Apply this workflow to substantive R&D in an enrolled workspace when the request
 
 ## Use the lab selected for the turn
 
-Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it only in Naome tool arguments. Keep tokens out of records and replies. If a requested write has no selected lab, ask once which configured lab to use. Use the selected lab even when the orchestrator is unavailable or the turn has no research assignment.
+Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it only in Naome tool arguments. Keep tokens out of records and replies. If the work should be recorded in a particular workspace lab, call `select_lab` with its enrolled name before starting the work. Pass `remember: true` when the user asks to keep that lab as the chat default. If no lab is selected and the intended destination is unclear, ask which configured lab to use. Use the selected lab even when the orchestrator is unavailable or the turn has no research assignment.
 
 The lab binding identifies the destination. Follow the user's request and workspace instructions for permission to record and transfer evidence. For authorized local notes, set `delivery` to `local`. Use assigned delivery only when the work authorizes submission to the assigned orchestrator. If workspace policy requires explicit permission and it is absent, continue the allowed research. If a write is necessary to the user-requested outcome, ask once for the specific operation and destination. A host approval denial remains in force. Continue the unaffected work and retry the write only after new authorization.
 
 ## Find prior lab evidence
 
-Use `list_recent_research` when asked what was recorded most recently. Request one record for the latest entry. It lists receipts for explicit Naome Codex research records confirmed by the selected lab, across chats in the current project. It returns the title, category, capture time, record ID and a short preview of the stored summary without a search snapshot. The full stored summary is available in the card details. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
+Use `list_recent_research` when asked what was recorded most recently. Request one record for the latest entry. If the user refers to another project or lab, interpret the request using the enrolled names from the hook and pass the intended `project` and `lab` as tool arguments. The same arguments apply to `search_research`. They affect only the requested read. If several enrolled names fit the request and the context cannot resolve it, ask which one to read.
+
+`list_recent_research` lists receipts for explicit Naome Codex research records confirmed by that lab across chats in the project. It returns the title, category, capture time, record ID and a short preview of the stored summary without a search snapshot. The full stored summary is available in the card details. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
 
 When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
 

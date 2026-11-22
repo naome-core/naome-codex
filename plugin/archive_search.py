@@ -127,7 +127,7 @@ def matches_scope(hit, scope):
 
 def search_research(bridge, binding, arguments, session):
     query, mode, limit = arguments.get("query"), arguments.get("mode", "auto"), arguments.get("limit", 5)
-    if not (arguments.keys() <= {"binding_token", "query", "mode", "limit"}
+    if not (arguments.keys() <= {"binding_token", "query", "mode", "limit", "project", "lab"}
             and isinstance(query, str) and 0 < len(query.strip()) <= QUERY_LIMIT and "\0" not in query
             and mode in MODES and type(limit) is int and 1 <= limit <= MAX_HITS):
         raise ValueError("Invalid research search arguments.")
@@ -179,12 +179,16 @@ def search_research(bridge, binding, arguments, session):
 
     current = Bridge()
     authorized = current.authorized(arguments["binding_token"])
-    if not authorized or (authorized["project"], authorized["lab"]) != (scope, binding["lab"]):
+    try:
+        selected = current.read_destination(authorized, arguments) if authorized else None
+    except ValueError:
+        selected = None
+    if not selected or (selected["project"], selected["lab"]) != (scope, binding["lab"]):
         session.close()
         raise DeliveryError("Research search authorization changed while the query was running.")
-    current_lab = current.configured_lab(authorized)
+    current_lab = current.configured_lab(selected)
     if not current_lab or current_lab.get("search_head") != head:
         session.close()
         raise DeliveryError("The approved search snapshot changed while the query was running.")
-    return {"project": authorized["project_name"], "lab": binding["lab_name"], "head": head, "mode": mode, "hits": hits,
+    return {"project": selected["project_name"], "lab": binding["lab_name"], "head": head, "mode": mode, "hits": hits,
             **{key: report[key] for key in COVERAGE}}

@@ -138,23 +138,25 @@ def main():
                     assert launches.read_text() == native_worker
                     print("PASS: an offline German paraphrase and hybrid query found the approved result.")
 
-                token_b = bind("b", "/lab B\nLook up the thermal run.")
-                assert call(token, approved)["isError"]
-                assert call(token_b, only_b)["isError"]
+                assert call(token, only_b, lab="B")["isError"]
                 lab_settings = settings["projects"]["calibration"]["labs"]["B"]
                 lab_settings["search_head"] = head_b
                 configure()
                 revoke.touch()
-                rejected = call(token_b, only_b)
+                rejected = call(token, only_b, lab="B")
                 assert rejected["isError"] and only_b not in json.dumps(rejected) and "structuredContent" not in rejected
                 assert "changed while the query was running" in rejected["content"][0]["text"]
-                assert call(token_b, only_b)["isError"]
+                assert call(token, only_b, lab="B")["isError"]
                 revoke.unlink()
                 configure()
-                response = result(token_b, only_b)
+                response = result(token, only_b, lab="B")
                 assert response["lab"] == "B" and response["head"] == head_b
                 assert response["hits"][0]["record_id"] == only_b
-                assert result(token_b, approved)["hits"] == []
+                assert result(token, approved, lab="B")["hits"] == []
+                assert result(token, approved)["lab"] == "A"
+                next_token = bind("b", "/lab B\nLook up the thermal run.")
+                assert call(token, approved)["isError"]
+                assert result(next_token, approved)["lab"] == "A"
                 assert all(not cli(lab, "status")["running"] for lab in (lab_a, lab_b))
             finally:
                 server.stdin.close()
