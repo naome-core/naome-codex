@@ -1,4 +1,4 @@
-"""Exercise hooks and stdio tools against two actual NAOME Network v0.2.0 nodes."""
+"""Exercise hooks and stdio tools against two nodes from the pinned NAOME Network release."""
 
 import json
 import os
@@ -42,12 +42,17 @@ def listener():
 
 
 def main():
-    assert subprocess.check_output([NAOME, "--version"], text=True).strip() == "naome 0.2.0"
+    release = json.loads(Path(__file__).with_name("naome-release.json").read_text(encoding="utf-8"))
+    expected_version = f"naome {release['network_version']}"
+    installed_version = subprocess.check_output([NAOME, "--version"], text=True).strip()
+    assert installed_version == expected_version, f"Expected {expected_version}, found {installed_version}"
     with tempfile.TemporaryDirectory(prefix="naome-codex-integration-") as scratch:
         temp = Path(scratch)
         hub, lab = temp / "hub", temp / "lab"
         hub_id, lab_id = initialize(hub), initialize(lab)
-        assert cli(hub, "archive", "capabilities")["version"] == "0.1.2"
+        expected_protocol = release["protocol_version"]
+        installed_protocol = cli(hub, "archive", "capabilities")["version"]
+        assert installed_protocol == expected_protocol, f"Expected protocol {expected_protocol}, found {installed_protocol}"
         held1, addr1 = listener()
         held2, addr2 = listener()
         for node, role, own, pid, peer in (

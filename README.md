@@ -1,6 +1,6 @@
 # NAOME Codex
 
-NAOME Codex creates research projects and records work in their local NAOME lab archives. It uses the released `naome` CLI and Python 3.9 or later on macOS. The pilot is tested with NAOME Network v0.2.0 and REP v0.1.2.
+NAOME Codex creates research projects and records work in their local NAOME lab archives. It uses the released `naome` CLI and Python 3.9 or later on macOS.
 
 ## Create a project
 
@@ -75,7 +75,9 @@ The plugin source and local Git history contain no lab data or keys. The enrollm
 
 ## Verify
 
-Run the integration test with the tested `naome` release in `~/.cargo/bin/naome`, or set `NAOME_TEST_BINARY` to the verified executable.
+The tested Network version, its bundled Protocol version, and the SHA-256 checksum for the `naome-macos-arm64` release asset are pinned in [tests/naome-release.json](tests/naome-release.json). For a release update, set those values in that file. CI uses the pin to download and verify the binary, and the integration test checks the installed versions against the same pin.
+
+Run the tests with the pinned `naome` release in `~/.cargo/bin/naome`, or set `NAOME_TEST_BINARY` to the verified executable.
 
 ```sh
 python3 tests/integration.py
