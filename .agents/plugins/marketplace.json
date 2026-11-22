@@ -11,7 +11,7 @@
         "path": "./plugin"
       },
       "interface": {
-        "displayName": "NAOME Research Lab"
+        "displayName": "Naome"
       }
     }
   ]

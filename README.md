@@ -20,7 +20,7 @@ NAOME Codex records work in the local NAOME lab archive. It uses the released `n
 
    Project keys match NAOME assignment project names. A project without Git may use any dedicated directory. A Git enrollment also covers linked worktrees of the same repository. An optional `job` field restricts automatic association to that assignment.
 
-2. Add the repository as a local marketplace. Install **NAOME Research Lab** in Codex desktop, or use the installed CLI.
+2. Add the repository as a local marketplace. Install **Naome** in Codex desktop, or use the installed CLI.
 
    ```sh
    codex plugin marketplace add /absolute/path/to/naome-codex

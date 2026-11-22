@@ -96,7 +96,7 @@ def context_output(event, binding, progress):
         association = "Research is recorded in the local lab archive. No assignment is selected."
     context = (
         f"This project is enrolled in NAOME. {association} "
-        f"Use the NAOME Research Lab tools to record questions, hypotheses and methods before work, "
+        f"Use the Naome tools to record questions, hypotheses and methods before work, "
         f"and material findings and limitations with evidence afterward. "
         f"Use binding_token {binding['token']} for this session. "
         f"Keep the token out of research records and chat replies. "
