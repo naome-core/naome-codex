@@ -1,9 +1,11 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "naome-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Record research from an enrolled Codex workspace in a local NAOME lab.",
-  "author": { "name": "NAOME" },
+  "author": {
+    "name": "NAOME"
+  },
   "extensions": {
     "com.openai": {
       "hooks": "./hooks/hooks.json",
@@ -13,8 +15,13 @@
         "longDescription": "Connect an enrolled workspace to a NAOME lab assignment. Capture local tool events and submit structured research records.",
         "developerName": "NAOME",
         "category": "Productivity",
-        "capabilities": ["Read", "Write"]
-      }
+        "capabilities": [
+          "Read",
+          "Write"
+        ]
+      },
+      "requires_local_executor": true
     }
-  }
+  },
+  "license": "MIT"
 }

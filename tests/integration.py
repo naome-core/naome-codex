@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRY = ROOT / "entry.py"
+ENTRY = ROOT / "plugin" / "entry.py"
 NAOME = Path(os.environ.get("NAOME_TEST_BINARY", str(Path.home() / ".cargo/bin/naome")))
 
 

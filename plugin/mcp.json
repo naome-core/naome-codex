@@ -4,7 +4,11 @@
     "naome-lab": {
       "type": "stdio",
       "command": "/usr/bin/python3",
-      "args": ["${PLUGIN_ROOT}/entry.py", "mcp"]
+      "args": [
+        "${PLUGIN_ROOT}/entry.py",
+        "mcp"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }
