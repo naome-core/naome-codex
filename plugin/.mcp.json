@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "naome-lab": {
+    "naome": {
       "command": "./entry.py",
       "args": [
         "mcp"

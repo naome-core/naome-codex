@@ -202,7 +202,7 @@ def dispatch(request):
         supported = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
         chosen = details.get("protocolVersion")
         return {"protocolVersion": chosen if isinstance(chosen, str) and chosen in supported else "2025-06-18",
-                "capabilities": {"tools": {}}, "serverInfo": {"name": "naome-lab", "version": "0.1.0"}}
+                "capabilities": {"tools": {}}, "serverInfo": {"name": "Naome", "version": "0.1.0"}}
     if method == "tools/list":
         return {"tools": TOOLS}
     if method == "ping":
