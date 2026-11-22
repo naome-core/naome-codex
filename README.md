@@ -40,7 +40,7 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
 
 ## Switch projects or labs in one chat
 
-In a chat from an enrolled workspace, put `/project <name>` on the first line to read another enrolled project for that turn. Put an optional `/lab <name>` on the next line to select one of that project's labs, then write the request. A short follow-up such as `and in naome-network` or `und in naome-network` also selects a known project for the turn.
+In a chat from an enrolled workspace, put `/project <name>` on the first line to read another enrolled project for that turn. Put an optional `/lab <name>` on the next line to select one of that project's labs, then write the request. A short follow-up such as `and in naome-network` or `und im naome network?` also selects a known project for the turn. Use the explicit command when a spoken or spaced name matches several enrolled names.
 
 Cross-workspace selection supports recent records and approved searches. The next turn uses the workspace project unless it selects another project again. Record and submit evidence from the workspace where that project is enrolled.
 

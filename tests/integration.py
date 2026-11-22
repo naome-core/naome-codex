@@ -261,22 +261,22 @@ def main():
         own_head = cli(lab, "archive", "snapshot", "Approved renamed project fixture", "--root", record)
         renamed = {
             "repo": {**projects["repo-research"], "archive_scope": "repo-research", "search_head": own_head},
-            "desk-research": {**projects["desk-research"], "search_head": other_head},
+            "naome-network": {**projects["desk-research"], "archive_scope": "desk-research", "search_head": other_head},
         }
         config.write_text(json.dumps({"naome": str(NAOME), "projects": renamed}))
         context = hook("UserPromptSubmit", work, "reader-session", turn_id="project-switch", prompt=(
             "# Applications mentioned by the user:\n\n"
             "[@Naome](plugin://computer-use@openai-bundled?app=com.example.BlankiOSApp)\n\n"
-            "## My request:\nund in desk-research [@Naome](plugin://naome-codex@naome-local)"
+            "## My request:\nund in naome-network [@Naome](plugin://naome-codex@naome-local)"
         ))["hookSpecificOutput"]["additionalContext"]
-        assert "The selected project is desk-research" in context and "read-only" in context
+        assert "The selected project is naome-network" in context and "read-only" in context
         switched = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
         selected = call_tool("list_recent_research", switched)["structuredContent"]
-        assert (selected["project"], selected["lab"]) == ("desk-research", "default")
+        assert (selected["project"], selected["lab"]) == ("naome-network", "default")
         assert [item["record_id"] for item in selected["records"]] == [other_record]
         assert tool("list_recent_research", reader)[0]
         search = call_tool("search_research", switched, query=other_record)["structuredContent"]
-        assert search["project"] == "desk-research" and search["hits"][0]["record_id"] == other_record
+        assert search["project"] == "naome-network" and search["hits"][0]["record_id"] == other_record
         failed, body = tool("search_research", switched, query=record)
         assert not failed and json.loads(body)["hits"] == []
         assert tool("retry_research_delivery", switched)[0]
@@ -286,9 +286,23 @@ def main():
         with sqlite3.connect(temp / "queue.sqlite") as db:
             assert db.execute("SELECT count(*) FROM entry WHERE event='Stop:project-switch'").fetchone()[0] == 0
 
+        context = hook("UserPromptSubmit", work, "reader-session", turn_id="spoken-project-switch",
+                       prompt="und im naome network?")["hookSpecificOutput"]["additionalContext"]
+        assert "The selected project is naome-network" in context
+        spoken = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
+        assert call_tool("list_recent_research", spoken)["structuredContent"] == selected
+        assert tool("list_recent_research", switched)[0]
+
+        ambiguous = {**renamed, "naome_network": {"workspace": str(others), "lab": str(lab)}}
+        config.write_text(json.dumps({"naome": str(NAOME), "projects": ambiguous}))
+        context = hook("UserPromptSubmit", work, "reader-session", turn_id="ambiguous-project",
+                       prompt="und im naome network?")["hookSpecificOutput"]["additionalContext"]
+        assert "The project name is ambiguous" in context and "binding_token" not in context
+        assert tool("list_recent_research", spoken)[0]
+        config.write_text(json.dumps({"naome": str(NAOME), "projects": renamed}))
+
         invalid = hook("UserPromptSubmit", work, "reader-session", turn_id="old-name", prompt="/project repo-research")
         assert "not enrolled" in invalid["hookSpecificOutput"]["additionalContext"]
-        assert tool("list_recent_research", switched)[0]
         context = hook("UserPromptSubmit", work, "reader-session", turn_id="own-project",
                        prompt="/project repo\n/lab default\nShow the latest record.")[
                            "hookSpecificOutput"]["additionalContext"]
@@ -299,7 +313,7 @@ def main():
         assert search["project"] == "repo" and search["hits"][0]["record_id"] == record
         assert archived["scope"] == "repo-research"
         context = hook("UserPromptSubmit", work, "reader-session", turn_id="explicit-switch",
-                       prompt="/project desk-research\n/lab default\nShow the latest record.")[
+                       prompt="/project naome-network\n/lab default\nShow the latest record.")[
                            "hookSpecificOutput"]["additionalContext"]
         explicit = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
         assert call_tool("list_recent_research", explicit)["structuredContent"]["records"][0]["record_id"] == other_record

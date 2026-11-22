@@ -6,7 +6,8 @@ from pathlib import Path
 NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}"
 PROJECT_DIRECTIVE = re.compile(r"^/project\b", re.I)
 PROJECT_SELECTION = re.compile(rf"/project\s+({NAME})", re.I)
-PROJECT_FOLLOW_UP = re.compile(rf"(?:und\s+|and\s+)?in\s+({NAME})[.!?]?", re.I)
+PROJECT_FOLLOW_UP = re.compile(rf"(?:(?:und|and)[ \t]+)?(?:in|im)[ \t]+({NAME}(?:[ \t]+{NAME})*)[.!?]?", re.I)
+PROJECT_NAME_SEPARATOR = re.compile(r"[-_\s]+")
 NAOME_MENTION = re.compile(r"\[@Naome\]\(plugin://naome-codex@naome-local\)", re.I)
 CURRENT = re.compile(
     rf"(?:/lab\s+({NAME})|für diesen schritt bitte labor\s+({NAME})\s+verwenden"
@@ -40,8 +41,17 @@ def choose_project(prompt, projects, workspace_project):
         return project, remaining, None
 
     follow_up = PROJECT_FOLLOW_UP.fullmatch(request)
-    if follow_up and (project := projects.get(follow_up[1].casefold())):
-        return project, "", None
+    if follow_up:
+        name = follow_up[1].casefold()
+        if name in projects:
+            return projects[name], "", None
+        normalized = PROJECT_NAME_SEPARATOR.sub("-", name)
+        matches = {scope for label, scope in projects.items()
+                   if PROJECT_NAME_SEPARATOR.sub("-", label) == normalized}
+        if len(matches) == 1:
+            return matches.pop(), "", None
+        if matches:
+            return None, "", "The project name is ambiguous. Use `/project <name>` with an exact enrolled name."
     return workspace_project, request, None
 
 
