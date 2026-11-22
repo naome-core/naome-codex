@@ -27,7 +27,7 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
    }
    ```
 
-   Project keys match NAOME assignment project names. A project without Git may use any dedicated directory. A Git enrollment also covers linked worktrees of the same repository. An optional `job` field restricts automatic association to that assignment.
+   Project keys also identify the archive scope and assignment project by default. To rename an enrollment, change its key and set `archive_scope` to its previous identifier so the existing archive, assignments, and chat routes remain accessible. A project without Git may use any dedicated directory. A Git enrollment also covers linked worktrees of the same repository. An optional `job` field restricts automatic association to that assignment.
 
 2. Add the repository as a local marketplace. Install **Naome** in Codex desktop, or use the installed CLI.
 
@@ -38,7 +38,13 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
 
 3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session inside the workspace. Each user message receives its own recorder context.
 
-## Multiple labs in one chat
+## Switch projects or labs in one chat
+
+In a chat from an enrolled workspace, put `/project <name>` on the first line to read another enrolled project for that turn. Put an optional `/lab <name>` on the next line to select one of that project's labs, then write the request. A short follow-up such as `and in naome-network` or `und in naome-network` also selects a known project for the turn.
+
+Cross-workspace selection supports recent records and approved searches. The next turn uses the workspace project unless it selects another project again. Record and submit evidence from the workspace where that project is enrolled.
+
+### Multiple labs in a project
 
 For a project with multiple labs, replace its `lab` path and optional `job` with `labs` and an optional `default_lab`:
 

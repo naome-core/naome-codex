@@ -1,9 +1,13 @@
-"""Resolve a user prompt to one configured lab without inferring permission from mentions."""
+"""Resolve project and lab selections from the user prompt."""
 
 import re
 from pathlib import Path
 
 NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}"
+PROJECT_DIRECTIVE = re.compile(r"^/project\b", re.I)
+PROJECT_SELECTION = re.compile(rf"/project\s+({NAME})", re.I)
+PROJECT_FOLLOW_UP = re.compile(rf"(?:und\s+|and\s+)?in\s+({NAME})[.!?]?", re.I)
+NAOME_MENTION = re.compile(r"\[@Naome\]\(plugin://naome-codex@naome-local\)", re.I)
 CURRENT = re.compile(
     rf"(?:/lab\s+({NAME})|für diesen schritt bitte labor\s+({NAME})\s+verwenden"
     rf"|use lab\s+({NAME})\s+for this turn)[.!]?", re.IGNORECASE,
@@ -17,6 +21,28 @@ MENTION = re.compile(
     rf"\blab(?:ore?|s)?\s+({NAME}(?:(?:\s+(?:and|or|und|oder)\s+|\s*[,/]\s*)(?:lab(?:or)?\s+)?{NAME})*)",
     re.IGNORECASE,
 )
+
+
+def choose_project(prompt, projects, workspace_project):
+    """Select a project for this turn and leave the remainder for lab routing."""
+    request = prompt.strip()
+    if request.startswith("# Applications mentioned by the user:") and "\n## My request:\n" in request:
+        request = request.split("\n## My request:\n", 1)[1]
+    request = NAOME_MENTION.sub("", request).strip()
+    first, _, remaining = request.partition("\n")
+    if PROJECT_DIRECTIVE.match(first):
+        selection = PROJECT_SELECTION.fullmatch(first.strip())
+        if not selection or PROJECT_DIRECTIVE.match(remaining.lstrip()):
+            return None, "", "Use one `/project <name>` directive on the first line."
+        project = projects.get(selection[1].casefold())
+        if not project:
+            return None, "", "The selected Naome project is not enrolled."
+        return project, remaining, None
+
+    follow_up = PROJECT_FOLLOW_UP.fullmatch(request)
+    if follow_up and (project := projects.get(follow_up[1].casefold())):
+        return project, "", None
+    return workspace_project, request, None
 
 
 def configured_labs(project):

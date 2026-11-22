@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from routing import choose_lab, configured_labs
+from routing import choose_lab, choose_project, configured_labs
 
 SUPPORT = Path.home() / "Library/Application Support/NAOME Codex"
 ACTIVE = {"assigned", "accepted", "running", "progress"}
@@ -55,7 +55,19 @@ class Bridge:
         self.config_bytes = self.config_path.read_bytes() if self.config_path.is_file() else None
         self.config = json.loads(self.config_bytes) if self.config_bytes is not None else {}
         self.state = Path(os.environ.get("NAOME_CODEX_STATE", str(SUPPORT / "journal.sqlite")))
-        self.projects = self.config.get("projects", {})
+        self.projects = {}
+        self.project_names = {}
+        self.project_scopes = {}
+        for name, project in self.config.get("projects", {}).items():
+            if not isinstance(project, dict):
+                raise ValueError("Each configured Naome project must be an object.")
+            scope = project.get("archive_scope", name)
+            if (not isinstance(scope, str) or not scope or scope in self.projects
+                    or name.casefold() in self.project_scopes):
+                raise ValueError("Configured Naome project names and archive scopes must be distinct.")
+            self.projects[scope] = project
+            self.project_names[scope] = name
+            self.project_scopes[name.casefold()] = scope
         self.naome = Path(self.config.get("naome", str(Path.home() / ".cargo/bin/naome")))
         if not self.naome.is_absolute():
             raise ValueError("The naome path must be absolute.")
@@ -139,26 +151,31 @@ class Bridge:
         # A turn route supplies the actual Codex session and its fixed assignment.
         return db.execute(
             "SELECT b.session, b.project, b.lab, t.session AS codex_session, t.turn, "
-            "t.lab_name, t.token, t.job FROM turn_route t "
+            "t.lab_name, t.token, t.job, c.project AS workspace_project FROM turn_route t "
             "JOIN conversation c ON t.session=c.session JOIN binding b ON t.destination=b.session "
             f"WHERE t.token IS NOT NULL AND {where}", parameters,
         ).fetchone()
 
     def turn_binding(self, project, session, turn, active=False):
         with self.open() as db:
-            row = self.route(db, "b.project=? AND t.session=? AND t.turn=? AND (NOT ? OR c.active_turn=t.turn)",
+            row = self.route(db, "c.project=? AND t.session=? AND t.turn=? AND (NOT ? OR c.active_turn=t.turn)",
                              (project, session, turn, active))
-        return dict(row) if row and self.lab_allowed(row) else None
+        return self.resolve_binding(row)
 
     def authorized(self, token):
         if not isinstance(token, str) or not self.projects:
             return None
         with self.open() as db:
             row = self.route(db, "t.token=? AND c.active_turn=t.turn", (token,))
-        return dict(row) if row and self.lab_allowed(row) else None
+        return self.resolve_binding(row)
+
+    def resolve_binding(self, row):
+        if row and row["workspace_project"] in self.projects and self.lab_allowed(row):
+            return {**dict(row), "project_name": self.project_names[row["project"]],
+                    "read_only": row["project"] != row["workspace_project"]}
 
     def begin_turn(self, project, session, turn, prompt):
-        labs, default = configured_labs(self.projects[project])
+        labs = {}
         with self.open() as db:
             db.execute("BEGIN IMMEDIATE")
             legacy = db.execute("SELECT project, lab FROM binding WHERE session=?", (session,)).fetchone()
@@ -171,30 +188,48 @@ class Bridge:
                 return None, issue, {}
             row = db.execute("SELECT * FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()
             if not row:
-                if chat["default_lab"]:
-                    default = next((name for name, lab in labs.items() if lab["path"] == chat["default_lab"]), None)
-                lab, persistent, issue = choose_lab(prompt, labs, default)
-                destination = None
-                if lab:
-                    path = lab["path"]
-                    destination = session if legacy and legacy["lab"] == path else "lab:" + digest([session, path])
-                    db.execute("INSERT OR IGNORE INTO binding VALUES (?, ?, NULL, ?, ?)",
-                               (destination, project, path, destination))
-                    if persistent:
-                        db.execute("UPDATE conversation SET default_lab=? WHERE session=?", (path, session))
-                self.note_turn(db, session, turn, destination, lab["name"] if lab else None, issue)
+                labs = self.select_turn(db, chat, turn, prompt, legacy)
                 row = db.execute("SELECT * FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()
             if not row["destination"]:
                 return None, row["issue"], labs
             binding = db.execute("SELECT * FROM binding WHERE session=?", (row["destination"],)).fetchone()
 
-        lab = next((lab for lab in labs.values() if lab["path"] == binding["lab"]), None)
+        lab = self.configured_lab(binding)
         if not lab:
             return None, "This turn's destination lab is no longer configured.", labs
         if not row["token"]:
-            self.finalize_turn(session, turn, binding, lab["job"])
+            self.finalize_turn(session, turn, binding, lab["job"], read_only=binding["project"] != project)
         bound = self.turn_binding(project, session, turn, active=True)
         return bound, None if bound else "This is no longer the active Codex turn.", labs if bound else {}
+
+    def select_turn(self, db, chat, turn, prompt, legacy):
+        session, workspace = chat["session"], chat["project"]
+        target, prompt, issue = choose_project(prompt, self.project_scopes, workspace)
+        if target is None:
+            self.note_turn(db, session, turn, issue=issue)
+            return {}
+        labs, default = configured_labs(self.projects[target])
+        if target == workspace and chat["default_lab"]:
+            default = next((name for name, lab in labs.items() if lab["path"] == chat["default_lab"]), None)
+        lab, persistent, issue = choose_lab(prompt, labs, default)
+        if persistent and target != workspace:
+            lab, issue = None, "Use `/lab <name>` to select a lab for a temporary project switch."
+        if lab is None:
+            self.note_turn(db, session, turn, issue=issue)
+            return labs
+
+        path = lab["path"]
+        if legacy and legacy["project"] == target and legacy["lab"] == path:
+            destination = session
+        else:
+            identity = [session, path] if target == workspace else [session, target, path]
+            destination = "lab:" + digest(identity)
+        db.execute("INSERT OR IGNORE INTO binding VALUES (?, ?, NULL, ?, ?)",
+                   (destination, target, path, destination))
+        if persistent:
+            db.execute("UPDATE conversation SET default_lab=? WHERE session=?", (path, session))
+        self.note_turn(db, session, turn, destination, lab["name"])
+        return labs
 
     @staticmethod
     def note_turn(db, session, turn, destination=None, lab_name=None, issue=None):
@@ -212,8 +247,13 @@ class Bridge:
                 if db.execute("SELECT 1 FROM conversation WHERE session=?", (session,)).fetchone():
                     self.note_turn(db, session, turn, issue="This turn has no enrolled project.")
 
-    def finalize_turn(self, session, turn, binding, preferred):
+    def finalize_turn(self, session, turn, binding, preferred, *, read_only=False):
         """Pin an assignment and a capability to the turn before exposing its route."""
+        if read_only:
+            with self.open() as db:
+                db.execute("UPDATE turn_route SET token=? WHERE session=? AND turn=? AND token IS NULL",
+                           (secrets.token_urlsafe(24), session, turn))
+            return
         try:
             self.require_lab(binding["lab"])
             jobs = self.call(binding["lab"], "research", "jobs", timeout=1.5)

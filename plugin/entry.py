@@ -109,8 +109,11 @@ def do_tool(name, arguments, search):
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
         raise ValueError("The active Codex turn has no valid Naome lab token.")
+    if binding["read_only"] and name in {"record_research", "retry_research_delivery"}:
+        raise ValueError("The selected project is read-only from this workspace.")
+    destination = {"project": binding["project_name"], "lab": binding["lab_name"]}
     if name == "research_status":
-        return tool_result({"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
+        return tool_result({**destination, "job": binding["job"],
                             **bridge.status(binding, include_chat=True)})
     if name == "list_recent_research":
         limit = arguments.get("limit", 1)
@@ -118,7 +121,7 @@ def do_tool(name, arguments, search):
                 and type(limit) is int and 1 <= limit <= MAX_RECENT_RECORDS):
             raise ValueError("Invalid recent research arguments.")
         records, summaries = recent_card_data(bridge.recent_research(binding, limit))
-        reply = tool_result({"project": binding["project"], "lab": binding["lab_name"],
+        reply = tool_result({**destination,
                              "source": "codex_archive_receipts", "records": records}, card=bool(records))
         if summaries:
             reply["_meta"] = {RECENT_SUMMARIES_KEY: summaries}
@@ -162,19 +165,32 @@ def do_tool(name, arguments, search):
     offset = bridge.enqueue(binding, event, category, title, fields, references)
     local = bridge.archive(binding, offset)
     delivered = bridge.flush(binding) if binding["job"] else {}
-    receipt = {"offset": offset, "lab": binding["lab_name"], "job": binding["job"],
+    receipt = {"offset": offset, **destination, "job": binding["job"],
                **delivered, **bridge.status(binding, offset),
                **{key: value for key, value in local.items() if key == "local_retry"}}
     return {**tool_result(receipt), **card_data(receipt, category, title, fields, references)}
 
 
 def context_output(binding, progress):
+    selection = (f"Naome selected lab {binding['lab_name']} for this turn. "
+                 f"The selected project is {binding['project_name']}. ")
+    reading = (
+        "Use list_recent_research for the latest research records in this project and lab. "
+        "The list uses local archive acknowledgments and works without a search snapshot. "
+        "For simple record lookups, use the displayed research card as the answer. "
+        "Add requested analysis or any material limit the card does not show. "
+        f"Use binding_token {binding['token']} only for this turn. "
+        "Keep the token out of research records and chat replies. "
+        "Report unknowns explicitly and use only evidence authorized for the project. "
+    )
+    if binding["read_only"]:
+        return prompt_context(selection + "The selected project is read-only from this workspace. " + reading)
     if binding["job"]:
         association = f"New records are associated with NAOME assignment {binding['job']}."
     else:
         association = "Research is recorded in the local lab archive. No assignment is selected."
     context = (
-        f"Naome selected lab {binding['lab_name']} for this turn. {association} "
+        f"{selection}{association} "
         "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill. "
         "Follow the user and workspace instructions for permission to record and send evidence. "
         "A lab selection and binding token identify a destination and do not grant recording permission. "
@@ -184,13 +200,7 @@ def context_output(binding, progress):
         "If recording is restricted or an approval is denied, continue the allowed work without retrying the write. "
         "Check the write result and report unresolved archive failures. "
         "For routine edits, maintenance and status checks, rely on automatic hook capture unless the user asks for a research record. "
-        "Use list_recent_research for the latest research records in this project and lab. "
-        "The list uses local archive acknowledgments and works without a search snapshot. "
-        "For simple record lookups, use the displayed research card as the answer. "
-        "Add requested analysis or any material limit the card does not show. "
-        f"Use binding_token {binding['token']} only for this turn. "
-        f"Keep the token out of research records and chat replies. "
-        f"Report unknowns explicitly and use only evidence authorized for the project. "
+        f"{reading}"
         f"Local archive pending: {progress['pending_local']}. "
         f"Assigned reports pending submission: {progress['pending_reports']}. "
         f"Across this chat's labs: {progress['chat_pending_local']} pending local writes and "
@@ -224,9 +234,11 @@ def hook(payload):
             choices = ", ".join(lab["name"] for lab in labs.values())
             context = f"{issue} No Naome writes are enabled for this turn. Do not reuse a previous token."
             if choices:
-                context += (f" If the user asked to record evidence, ask once which configured lab to use ({choices})."
-                            " The user can put `/lab <name>` on the first line of the next message.")
+                context += (f" If the request needs a Naome archive, ask once which configured lab to use ({choices})."
+                            " The user can put `/lab <name>` on the first line after any `/project <name>` line.")
             return prompt_context(context)
+        if binding["read_only"]:
+            return context_output(binding, None)
         progress = bridge.flush(binding)
         notice = schedule(bridge, binding)
         response = context_output(binding, progress)
@@ -234,7 +246,7 @@ def hook(payload):
             response["systemMessage"] = notice
         return response
     binding = bridge.turn_binding(project, session, turn)
-    if not binding:
+    if not binding or binding["read_only"]:
         return {}
     if event == "PostToolUse":
         name, call_id = payload.get("tool_name"), payload.get("tool_use_id")

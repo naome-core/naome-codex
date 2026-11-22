@@ -11,7 +11,7 @@ const head = id('c');
 const captured = '2026-11-22T15:24:55Z';
 const written = {
   structuredContent: { record_id: record, title: 'Synthetic result', category: 'result',
-    lab: 'A', summary: 'Short summary' },
+    project: 'calibration', lab: 'A', summary: 'Short summary' },
   _meta: { 'naome/research-block': { record_id: record, summary: 'Full summary',
     sources: ['<img src=x>'], linked_records: [linked] } },
 };
@@ -104,7 +104,7 @@ assert.equal(view.results.hidden, true);
 view.receive(written);
 assert.equal(view.results.hidden, false);
 assert.equal(view.card()('h2').textContent, 'Synthetic result');
-assert.equal(view.card()('.naome-card-context').textContent, 'Result · Lab A');
+assert.equal(view.card()('.naome-card-context').textContent, 'Result · calibration · Lab A');
 assert.equal(view.card()('.naome-card-preview').textContent, 'Short summary');
 assert.equal(view.card()('button').textContent, 'more');
 assert.deepEqual(details(view.card()), {});
@@ -121,7 +121,7 @@ assert.equal(view.messages.at(-1).params.height, 180);
 
 view.deliver({ method: 'ui/notifications/host-context-changed', params: { locale: 'de-DE' } });
 assert.equal(view.card()('button').textContent, 'weniger');
-assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A');
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · calibration · Lab A');
 assert.equal(details(view.card()).Quellen, '<img src=x>');
 view.receive({ ...written, structuredContent: { ...written.structuredContent, record_id: linked } });
 assert.equal(view.results.hidden, true);
@@ -130,7 +130,7 @@ assert.equal(view.records.children.length, 0);
 view.receive(recent);
 const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(captured));
 assert.equal(view.card()('h2').textContent, 'Latest result');
-assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · Lab A · ' + date);
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · calibration · Lab A · ' + date);
 assert.equal(view.card()('.naome-card-preview').textContent, 'Saved summary preview');
 view.click();
 assert.equal(details(view.card()).Zusammenfassung, 'The full saved summary');
@@ -140,17 +140,17 @@ assert.equal(view.card()('.naome-card-preview').hidden, false);
 assert.equal(view.card(1)('h2').textContent, 'Earlier method');
 assert.notEqual(view.card()('button').attributes['aria-controls'], view.card(1)('button').attributes['aria-controls']);
 view.click(1);
-assert.deepEqual(details(view.card(1)), { Projekt: 'calibration', 'Eintrags-ID': linked });
+assert.deepEqual(details(view.card(1)), { 'Eintrags-ID': linked });
 assert.deepEqual(details(view.card()), {});
 view.click(1);
 assert.deepEqual(details(view.card(1)), {});
 assert.equal(view.notice.hidden, true);
 
 view.receive({ structuredContent: { ...recent.structuredContent, lab: 'default' } });
-assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · ' + date);
+assert.equal(view.card()('.naome-card-context').textContent, 'Ergebnis · calibration · ' + date);
 assert.equal(view.card()('button').textContent, 'mehr');
 view.click();
-assert.deepEqual(details(view.card()), { Zusammenfassung: 'Saved summary preview', Projekt: 'calibration',
+assert.deepEqual(details(view.card()), { Zusammenfassung: 'Saved summary preview',
   Labor: 'default', 'Eintrags-ID': record });
 assert.equal(view.card()('.naome-card-preview').hidden, true);
 
@@ -166,14 +166,14 @@ assert.equal(view.styles.size, 0);
 const replay = widget();
 replay.receive(searched);
 assert.equal(replay.card()('h2').textContent, 'Matched result');
-assert.equal(replay.card()('.naome-card-context').textContent, 'Derivation · Lab A');
+assert.equal(replay.card()('.naome-card-context').textContent, 'Derivation · calibration · Lab A');
 assert.equal(replay.card()('.naome-card-preview').textContent, 'A matched excerpt from the approved snapshot.');
 assert.equal(replay.card(1)('h2').textContent, 'Research record');
 assert.equal(replay.notice.hidden, false);
 replay.click();
 assert.deepEqual(details(replay.card()), { 'Search excerpt': 'A matched excerpt from the approved snapshot.',
   'Linked records': linked, 'Search snapshot': head, 'Match location': '/fields/summary',
-  Project: 'calibration', 'Record ID': record });
+  'Record ID': record });
 replay.receive({ ...searched, isError: true });
 assert.equal(replay.results.hidden, true);
 assert.equal(replay.messages.at(-1).params.height, 0);

@@ -186,5 +186,5 @@ def search_research(bridge, binding, arguments, session):
     if not current_lab or current_lab.get("search_head") != head:
         session.close()
         raise DeliveryError("The approved search snapshot changed while the query was running.")
-    return {"project": scope, "lab": binding["lab_name"], "head": head, "mode": mode, "hits": hits,
+    return {"project": authorized["project_name"], "lab": binding["lab_name"], "head": head, "mode": mode, "hits": hits,
             **{key: report[key] for key in COVERAGE}}

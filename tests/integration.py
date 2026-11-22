@@ -4,6 +4,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -194,6 +195,7 @@ def main():
         record = json.loads(recorded["content"][0]["text"])["local_record"]
         card = recorded["structuredContent"]
         assert card["record_id"] == record
+        assert card["project"] == "repo-research"
         assert (card["title"], card["category"], card["lab"]) == ("Offline readback", "result", "default")
         assert len(card["summary"]) <= 160 and card["summary"].endswith("…")
         assert recorded["_meta"] == {"naome/research-block": {
@@ -251,6 +253,59 @@ def main():
         assert show_local(lab, recovered["local_record"])["subject"] == "Deferred locally"
         assert json.loads(tool("list_recent_research", reader)[1])["records"][0]["record_id"] == (
             recovered["local_record"])
+
+        # Rename the enrolled workspace and preserve its journal, then read a second
+        # project in the same chat. Both projects use a lab named default.
+        other_record = other["structuredContent"]["record_id"]
+        other_head = cli(lab, "archive", "snapshot", "Approved project switch fixture", "--root", other_record)
+        own_head = cli(lab, "archive", "snapshot", "Approved renamed project fixture", "--root", record)
+        renamed = {
+            "repo": {**projects["repo-research"], "archive_scope": "repo-research", "search_head": own_head},
+            "desk-research": {**projects["desk-research"], "search_head": other_head},
+        }
+        config.write_text(json.dumps({"naome": str(NAOME), "projects": renamed}))
+        context = hook("UserPromptSubmit", work, "reader-session", turn_id="project-switch", prompt=(
+            "# Applications mentioned by the user:\n\n"
+            "[@Naome](plugin://computer-use@openai-bundled?app=com.example.BlankiOSApp)\n\n"
+            "## My request:\nund in desk-research [@Naome](plugin://naome-codex@naome-local)"
+        ))["hookSpecificOutput"]["additionalContext"]
+        assert "The selected project is desk-research" in context and "read-only" in context
+        switched = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
+        selected = call_tool("list_recent_research", switched)["structuredContent"]
+        assert (selected["project"], selected["lab"]) == ("desk-research", "default")
+        assert [item["record_id"] for item in selected["records"]] == [other_record]
+        assert tool("list_recent_research", reader)[0]
+        search = call_tool("search_research", switched, query=other_record)["structuredContent"]
+        assert search["project"] == "desk-research" and search["hits"][0]["record_id"] == other_record
+        failed, body = tool("search_research", switched, query=record)
+        assert not failed and json.loads(body)["hits"] == []
+        assert tool("retry_research_delivery", switched)[0]
+        assert "read-only" in tool("record_research", switched, category="method", title="Unexpected write",
+                                   summary="A project switch cannot write here.", sources=[])[1]
+        assert hook("Stop", work, "reader-session", turn_id="project-switch") == {}
+        with sqlite3.connect(temp / "queue.sqlite") as db:
+            assert db.execute("SELECT count(*) FROM entry WHERE event='Stop:project-switch'").fetchone()[0] == 0
+
+        invalid = hook("UserPromptSubmit", work, "reader-session", turn_id="old-name", prompt="/project repo-research")
+        assert "not enrolled" in invalid["hookSpecificOutput"]["additionalContext"]
+        assert tool("list_recent_research", switched)[0]
+        context = hook("UserPromptSubmit", work, "reader-session", turn_id="own-project",
+                       prompt="/project repo\n/lab default\nShow the latest record.")[
+                           "hookSpecificOutput"]["additionalContext"]
+        own = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
+        selected = call_tool("list_recent_research", own)["structuredContent"]
+        assert selected["project"] == "repo" and selected["records"][0]["record_id"] == recovered["local_record"]
+        search = call_tool("search_research", own, query=record)["structuredContent"]
+        assert search["project"] == "repo" and search["hits"][0]["record_id"] == record
+        assert archived["scope"] == "repo-research"
+        context = hook("UserPromptSubmit", work, "reader-session", turn_id="explicit-switch",
+                       prompt="/project desk-research\n/lab default\nShow the latest record.")[
+                           "hookSpecificOutput"]["additionalContext"]
+        explicit = re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
+        assert call_tool("list_recent_research", explicit)["structuredContent"]["records"][0]["record_id"] == other_record
+        returned = token_for(work, "reader-session", "return-to-workspace")
+        assert call_tool("list_recent_research", returned)["structuredContent"]["project"] == "repo"
+        config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
         lab_config_path.write_text(json.dumps(lab_config))
 
         started = []

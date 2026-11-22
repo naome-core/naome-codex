@@ -50,7 +50,7 @@ def card_data(receipt, category, title, fields, references):
     summary = fields["summary"]
     return {
         "structuredContent": {"record_id": record_id, "title": title, "category": category,
-                              "lab": receipt["lab"], "summary": summary_preview(summary)},
+                              "project": receipt["project"], "lab": receipt["lab"], "summary": summary_preview(summary)},
         "_meta": {DETAILS_KEY: {"record_id": record_id, "summary": summary, "sources": fields["sources"],
                                "linked_records": references}},
     }

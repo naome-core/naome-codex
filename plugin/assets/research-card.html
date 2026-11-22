@@ -44,7 +44,7 @@
         title: 'Naome research records', details: 'Research record details', record: 'Research record',
         show: 'more', hide: 'less', limited: 'Search coverage is limited.',
         fields: { summary: 'Summary', excerpt: 'Search excerpt', sources: 'Sources', links: 'Linked records',
-          recordId: 'Record ID', project: 'Project', lab: 'Lab', snapshot: 'Search snapshot', location: 'Match location' },
+          recordId: 'Record ID', lab: 'Lab', snapshot: 'Search snapshot', location: 'Match location' },
         categories: { question: 'Question', hypothesis: 'Hypothesis', method: 'Method',
           observation: 'Observation', result: 'Result', limitation: 'Limitation', correction: 'Correction',
           claim: 'Claim', plan: 'Plan', occurrence: 'Occurrence', derivation: 'Derivation' }
@@ -53,7 +53,7 @@
         title: 'Naome-Forschungseinträge', details: 'Details zum Forschungseintrag', record: 'Forschungseintrag',
         show: 'mehr', hide: 'weniger', limited: 'Die Suche deckt nur einen Teil der Daten ab.',
         fields: { summary: 'Zusammenfassung', excerpt: 'Suchauszug', sources: 'Quellen', links: 'Verknüpfte Einträge',
-          recordId: 'Eintrags-ID', project: 'Projekt', lab: 'Labor', snapshot: 'Such-Snapshot', location: 'Fundstelle' },
+          recordId: 'Eintrags-ID', lab: 'Labor', snapshot: 'Such-Snapshot', location: 'Fundstelle' },
         categories: { question: 'Frage', hypothesis: 'Hypothese', method: 'Methode',
           observation: 'Beobachtung', result: 'Ergebnis', limitation: 'Einschränkung', correction: 'Korrektur',
           claim: 'Behauptung', plan: 'Plan', occurrence: 'Ereignis', derivation: 'Ableitung' }
@@ -84,24 +84,24 @@
         const summaries = result?._meta?.['naome/research-summaries'];
         return data.records.filter(record => isId(record?.record_id) && typeof record.title === 'string')
           .map(record => ({ recordId: record.record_id, title: record.title, category: record.category,
-            lab: data.lab, capturedAt: record.captured_at,
+            project: data.project, lab: data.lab, capturedAt: record.captured_at,
             preview: typeof record.preview === 'string' ? record.preview : '',
-            fields: { summary: summaries?.[record.record_id] ?? record.preview, project: data.project } }));
+            fields: { summary: summaries?.[record.record_id] ?? record.preview } }));
       }
       if (isId(data.head) && Array.isArray(data.hits)) {
         return data.hits.filter(hit => isId(hit?.record_id)).map(hit => {
           const excerpt = typeof hit.snippet === 'string' ? hit.snippet : '';
           const links = Array.isArray(hit.links) ? hit.links.map(link => link?.target).filter(isId) : [];
-          return { recordId: hit.record_id, title: hit.subject, category: hit.kind, lab: data.lab,
+          return { recordId: hit.record_id, title: hit.subject, category: hit.kind, project: data.project, lab: data.lab,
             preview: excerptPreview(excerpt), fields: { excerpt, links, snapshot: data.head,
-              location: hit.location?.pointer, project: data.project } };
+              location: hit.location?.pointer } };
         });
       }
       const full = result?._meta?.['naome/research-block'];
       if (!isId(data.record_id) || full?.record_id !== data.record_id ||
           ![data.title, data.category, data.summary, full.summary].every(value => typeof value === 'string') ||
           !isTextList(full.sources) || !isTextList(full.linked_records)) return [];
-      return [{ recordId: data.record_id, title: data.title, category: data.category, lab: data.lab,
+      return [{ recordId: data.record_id, title: data.title, category: data.category, project: data.project, lab: data.lab,
         preview: data.summary, fields: { summary: full.summary, sources: full.sources, links: full.linked_records } }];
     }
 
@@ -138,7 +138,9 @@
       const date = typeof entry.capturedAt === 'string' ? new Date(entry.capturedAt) : null;
       const timestamp = date && Number.isFinite(date.getTime()) ? dateFormatter.format(date) : '';
       const defaultLab = entry.lab === 'default';
-      context.textContent = [category, defaultLab ? '' : 'Lab ' + entry.lab, timestamp].filter(Boolean).join(' · ');
+      const project = typeof entry.project === 'string' ? entry.project : '';
+      context.textContent = [category, project, defaultLab ? '' : 'Lab ' + entry.lab, timestamp]
+        .filter(Boolean).join(' · ');
       details.setAttribute('aria-label', labels.details);
       toggle.textContent = details.hidden ? labels.show : labels.hide;
       if (!details.hidden) {

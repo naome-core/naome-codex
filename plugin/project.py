@@ -34,10 +34,13 @@ def create_project(bridge, arguments):
         except BlockingIOError as error:
             raise DeliveryError("Another Naome project is being created. Retry in a moment.") from error
         bridge = Bridge()
-        project = bridge.projects.get(name)
-        if name in bridge.projects and (not isinstance(project, dict) or project.get("mode") != mode):
+        configured = bridge.config.get("projects", {})
+        project = configured.get(name)
+        if name in configured and (not isinstance(project, dict) or project.get("mode") != mode):
             raise ValueError(f"Project {name} already exists with a different setup.")
         if project is None:
+            if name in bridge.projects or name in bridge.project_scopes:
+                raise ValueError(f"The project name or archive scope {name} is already registered.")
             project = initialize_project(bridge, name, mode)
             created = True
         else:
@@ -103,7 +106,7 @@ def write_node(directory, role, address, peers):
 
 def enroll(bridge, name, project):
     path = bridge.config_path
-    amended = {**bridge.config, "projects": {**bridge.projects, name: project}}
+    amended = {**bridge.config, "projects": {**bridge.config.get("projects", {}), name: project}}
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as output:
         temporary = Path(output.name)
         try:
