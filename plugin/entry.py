@@ -11,7 +11,7 @@ from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 
 ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired)
 INPUT_LIMIT = 8 * 1024 * 1024
-TOKEN = {"type": "string", "description": "The local enrollment token supplied by the current project's NAOME hook."}
+TOKEN = {"type": "string", "description": "The local lab token supplied by the current turn's Naome hook."}
 TOKENS = {"binding_token": TOKEN}
 
 
@@ -54,9 +54,10 @@ def do_tool(name, arguments):
     bridge = Bridge()
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
-        raise ValueError("The active Codex session has no enrolled NAOME project.")
+        raise ValueError("The active Codex turn has no valid Naome lab token.")
     if name == "research_status":
-        return {"project": binding["project"], "job": binding["job"], **bridge.status(binding)}
+        return {"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
+                **bridge.status(binding)}
     if name == "retry_research_delivery":
         return bridge.flush(binding)
     if name != "record_research":
@@ -78,55 +79,66 @@ def do_tool(name, arguments):
     if category == "correction" and not supplied:
         raise ValueError("A correction must link to the original archived record.")
     references = sorted(set(supplied))
-    fields = {"summary": summary.strip(), "sources": sources, "recorded_by": "Codex MCP"}
+    fields = {"summary": summary.strip(), "sources": sources, "recorded_by": "Codex MCP",
+              "codex_turn": binding["turn"]}
     event = "research:" + digest([category, title.strip(), fields, references])
     offset = bridge.enqueue(binding, event, category, title.strip(), fields, references)
     local = bridge.archive(binding, offset)
     delivered = bridge.flush(binding) if binding["job"] else {}
-    return {"offset": offset, "job": binding["job"], **delivered, **bridge.status(binding, offset),
+    return {"offset": offset, "lab": binding["lab_name"], "job": binding["job"],
+            **delivered, **bridge.status(binding, offset),
             **{key: value for key, value in local.items() if key == "local_retry"}}
 
 
-def context_output(event, binding, progress):
-    if not binding:
-        return {}
+def context_output(binding, progress):
     if binding["job"]:
         association = f"New records are associated with NAOME assignment {binding['job']}."
     else:
         association = "Research is recorded in the local lab archive. No assignment is selected."
     context = (
-        f"This project is enrolled in NAOME. {association} "
+        f"Naome selected lab {binding['lab_name']} for this turn. {association} "
         f"Use the Naome tools to record questions, hypotheses and methods before work, "
         f"and material findings and limitations with evidence afterward. "
-        f"Use binding_token {binding['token']} for this session. "
+        f"Use binding_token {binding['token']} only for this turn. "
         f"Keep the token out of research records and chat replies. "
         f"Report unknowns explicitly and use only evidence authorized for the project. "
         f"Local archive pending: {progress['pending_local']}. "
         f"Assigned reports pending submission: {progress['pending_reports']}."
     )
-    return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}
+    return prompt_context(context)
+
+
+def prompt_context(context):
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
 
 
 def hook(payload):
     bridge = Bridge()
     event = payload.get("hook_event_name")
     session = payload.get("session_id")
-    if not isinstance(session, str) or not session or len(session) > 160:
+    turn = payload.get("turn_id")
+    if not all(isinstance(value, str) and 0 < len(value) <= 160 for value in (session, turn)):
         return {}
     project = bridge.project_at(payload.get("cwd"))
     if not project:
+        if event == "UserPromptSubmit":
+            bridge.leave_project(session, turn)
         return {}
-    if event in {"SessionStart", "UserPromptSubmit"}:
-        binding = bridge.bind(project, session)
-        if not binding:
+    if event == "UserPromptSubmit":
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str):
             return {}
-        binding = bridge.associate_job(binding)
-        return context_output(event, binding, bridge.flush(binding))
-    binding = bridge.binding(session)
-    if not binding or binding["project"] != project:
-        return {}
-    turn = payload.get("turn_id")
-    if not isinstance(turn, str) or not turn or len(turn) > 160:
+        binding, issue, labs = bridge.begin_turn(project, session, turn, prompt)
+        if not binding:
+            choices = ", ".join(lab["name"] for lab in labs.values())
+            context = f"{issue} No Naome writes are enabled for this turn. Do not reuse a previous token."
+            if choices:
+                context += (f" If the user asked to record evidence, ask once which configured lab to use ({choices})."
+                            " The user can put `/lab <name>` on the first line of the next message.")
+            return prompt_context(context)
+        return context_output(binding, bridge.flush(binding))
+    binding = bridge.turn_binding(project, session, turn)
+    if not binding:
         return {}
     if event == "PostToolUse":
         name, call_id = payload.get("tool_name"), payload.get("tool_use_id")
@@ -159,7 +171,7 @@ def hook(payload):
             bridge.archive(binding, offset, budget=0.8)
         else:
             progress = bridge.flush(binding)
-            if progress["pending_local"] or progress["pending_reports"]:
+            if any(progress.get(key) for key in ("pending_local", "pending_reports", "local_retry", "report_retry")):
                 return {"systemMessage": "NAOME still has local records or assigned reports queued."}
     return {}
 

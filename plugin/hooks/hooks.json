@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/bin/python3 \"$PLUGIN_ROOT/entry.py\" hook",
-            "timeout": 12
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [

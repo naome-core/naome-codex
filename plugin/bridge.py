@@ -13,6 +13,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from routing import choose_lab, configured_labs
+
 SUPPORT = Path.home() / "Library/Application Support/NAOME Codex"
 ACTIVE = {"assigned", "accepted", "running", "progress"}
 ID = re.compile(r"1:[012]:[0-9a-f]{64}\Z")
@@ -94,6 +96,13 @@ class Bridge:
                         captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY(session, offset), UNIQUE(session, event)
                     );
+                    CREATE TABLE IF NOT EXISTS conversation (
+                        session TEXT PRIMARY KEY, project TEXT NOT NULL, default_lab TEXT, active_turn TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS turn_route (
+                        session TEXT NOT NULL, turn TEXT NOT NULL, destination TEXT, lab_name TEXT,
+                        job TEXT, token TEXT UNIQUE, issue TEXT, PRIMARY KEY(session, turn)
+                    );
                 """)
                 yield db
         finally:
@@ -115,74 +124,143 @@ class Bridge:
             raise DeliveryError("NAOME returned an unreadable response.") from error
         return lines if args[:2] == ("research", "stream") else (lines[0] if lines else None)
 
-    def binding(self, session):
-        if not self.projects:
-            return None
+    def lab_allowed(self, binding):
+        project = self.projects.get(binding["project"])
+        return project is not None and any(
+            lab["path"] == binding["lab"] for lab in configured_labs(project)[0].values()
+        )
+
+    @staticmethod
+    def route(db, where, parameters):
+        # The binding session identifies an enduring local journal and report stream.
+        # A turn route supplies the actual Codex session and its fixed assignment.
+        return db.execute(
+            "SELECT b.session, b.project, b.lab, t.session AS codex_session, t.turn, "
+            "t.lab_name, t.token, t.job FROM turn_route t "
+            "JOIN conversation c ON t.session=c.session JOIN binding b ON t.destination=b.session "
+            f"WHERE t.token IS NOT NULL AND {where}", parameters,
+        ).fetchone()
+
+    def turn_binding(self, project, session, turn, active=False):
         with self.open() as db:
-            row = db.execute("SELECT * FROM binding WHERE session=?", (session,)).fetchone()
-        if row is None:
-            return None
-        configured = self.projects.get(row["project"])
-        if not configured or str(Path(configured["lab"]).resolve()) != row["lab"]:
-            return None
-        return dict(row)
+            row = self.route(db, "b.project=? AND t.session=? AND t.turn=? AND (NOT ? OR c.active_turn=t.turn)",
+                             (project, session, turn, active))
+        return dict(row) if row and self.lab_allowed(row) else None
 
     def authorized(self, token):
         if not isinstance(token, str) or not self.projects:
             return None
         with self.open() as db:
-            row = db.execute("SELECT session FROM binding WHERE token=?", (token,)).fetchone()
-        return self.binding(row["session"]) if row else None
+            row = self.route(db, "t.token=? AND c.active_turn=t.turn", (token,))
+        return dict(row) if row and self.lab_allowed(row) else None
 
-    def bind(self, project, session):
-        bound = self.binding(session)
-        if bound:
-            return bound if bound["project"] == project else None
-        settings = self.projects[project]
-        lab_path = Path(settings["lab"])
-        if not lab_path.is_absolute():
-            raise ValueError("Lab directories must be absolute.")
-        lab_path = lab_path.resolve()
-        if json.loads((lab_path / "node.json").read_text())["role"] != "lab":
-            raise ValueError("The enrolled node must have the lab role.")
-        lab = str(lab_path)
-        with self.open() as db:
-            db.execute("INSERT OR IGNORE INTO binding VALUES (?, ?, NULL, ?, ?)",
-                       (session, project, lab, secrets.token_urlsafe(24)))
-        bound = self.binding(session)
-        return bound if bound and bound["project"] == project else None
-
-    def associate_job(self, binding):
-        """Select an eligible assignment for future records. Keep past records local."""
-        try:
-            jobs = self.call(binding["lab"], "research", "jobs", timeout=1.5)
-        except DeliveryError:
-            return binding
+    def begin_turn(self, project, session, turn, prompt):
+        labs, default = configured_labs(self.projects[project])
         with self.open() as db:
             db.execute("BEGIN IMMEDIATE")
-            current = db.execute("SELECT job FROM binding WHERE session=?",
-                                 (binding["session"],)).fetchone()[0]
-            if current and not any(item["id"] == current and item["phase"] in ACTIVE for item in jobs):
+            legacy = db.execute("SELECT project, lab FROM binding WHERE session=?", (session,)).fetchone()
+            owner = legacy["project"] if legacy else project
+            db.execute("INSERT OR IGNORE INTO conversation(session,project) VALUES (?,?)", (session, owner))
+            chat = db.execute("SELECT * FROM conversation WHERE session=?", (session,)).fetchone()
+            if chat["project"] != project:
+                issue = "This Codex chat is enrolled in a different project. Open a chat in this workspace to record evidence."
+                self.note_turn(db, session, turn, issue=issue)
+                return None, issue, {}
+            row = db.execute("SELECT * FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()
+            if not row:
+                if chat["default_lab"]:
+                    default = next((name for name, lab in labs.items() if lab["path"] == chat["default_lab"]), None)
+                lab, persistent, issue = choose_lab(prompt, labs, default)
+                destination = None
+                if lab:
+                    path = lab["path"]
+                    destination = session if legacy and legacy["lab"] == path else "lab:" + digest([session, path])
+                    db.execute("INSERT OR IGNORE INTO binding VALUES (?, ?, NULL, ?, ?)",
+                               (destination, project, path, destination))
+                    if persistent:
+                        db.execute("UPDATE conversation SET default_lab=? WHERE session=?", (path, session))
+                self.note_turn(db, session, turn, destination, lab["name"] if lab else None, issue)
+                row = db.execute("SELECT * FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()
+            if not row["destination"]:
+                return None, row["issue"], labs
+            binding = db.execute("SELECT * FROM binding WHERE session=?", (row["destination"],)).fetchone()
+
+        lab = next((lab for lab in labs.values() if lab["path"] == binding["lab"]), None)
+        if not lab:
+            return None, "This turn's destination lab is no longer configured.", labs
+        if not row["token"]:
+            self.finalize_turn(session, turn, binding, lab["job"])
+        bound = self.turn_binding(project, session, turn, active=True)
+        return bound, None if bound else "This is no longer the active Codex turn.", labs if bound else {}
+
+    @staticmethod
+    def note_turn(db, session, turn, destination=None, lab_name=None, issue=None):
+        inserted = db.execute(
+            "INSERT OR IGNORE INTO turn_route(session,turn,destination,lab_name,issue) VALUES (?,?,?,?,?)",
+            (session, turn, destination, lab_name, issue),
+        ).rowcount
+        if inserted:
+            db.execute("UPDATE conversation SET active_turn=? WHERE session=?", (turn, session))
+
+    def leave_project(self, session, turn):
+        if self.state.is_file():
+            with self.open() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM conversation WHERE session=?", (session,)).fetchone():
+                    self.note_turn(db, session, turn, issue="This turn has no enrolled project.")
+
+    def finalize_turn(self, session, turn, binding, preferred):
+        """Pin an assignment and a capability to the turn before exposing its route."""
+        try:
+            self.require_lab(binding["lab"])
+            jobs = self.call(binding["lab"], "research", "jobs", timeout=1.5)
+        except (DeliveryError, OSError):
+            jobs = None
+        with self.open() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT token FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()[0]:
+                return
+            destination, path = binding["session"], binding["lab"]
+            current = db.execute("SELECT job FROM binding WHERE session=?", (destination,)).fetchone()[0]
+            if preferred and current != preferred:
                 current = None
-            if not current:
-                claimed = {r[0] for r in db.execute("SELECT job FROM binding WHERE lab=?", (binding["lab"],))}
-                preferred = self.projects[binding["project"]].get("job")
+            if jobs is not None:
+                claimed = {r[0] for r in db.execute(
+                    "SELECT job FROM binding WHERE lab=? AND session<>? UNION "
+                    "SELECT e.job FROM entry e JOIN binding b USING(session) WHERE b.lab=? AND b.session<>? "
+                    "UNION SELECT t.job FROM turn_route t JOIN binding b ON t.destination=b.session "
+                    "WHERE b.lab=? AND b.session<>?", (path, destination, path, destination, path, destination),
+                )}
                 eligible = [
                     item["id"] for item in jobs
                     if item["assignment"]["project"] == binding["project"] and item["input_ready"]
                     and item["phase"] in ACTIVE and item["id"] not in claimed
                     and (not preferred or item["id"] == preferred)
                 ]
-                current = eligible[0] if len(eligible) == 1 else None
-            db.execute("UPDATE binding SET job=? WHERE session=?", (current, binding["session"]))
-        return {**binding, "job": current}
+                if current not in eligible:
+                    current = eligible[0] if len(eligible) == 1 else None
+            db.execute("UPDATE binding SET job=? WHERE session=?", (current, destination))
+            db.execute("UPDATE turn_route SET job=?,token=? WHERE session=? AND turn=?",
+                       (current, secrets.token_urlsafe(24), session, turn))
+
+    @staticmethod
+    def require_lab(lab):
+        directory = Path(lab)
+        if not (directory / "archive.sqlite").is_file():
+            raise DeliveryError("The selected laboratory archive is unavailable.")
+        try:
+            role = json.loads((directory / "node.json").read_text())["role"]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise DeliveryError("The selected laboratory node configuration is unavailable.") from error
+        if role != "lab":
+            raise DeliveryError("The selected node must have the lab role.")
 
     def enqueue(self, binding, event, category, subject, fields, references=()):
         document = {
             "kind": KINDS[category],
             "subject": subject,
             "scope": binding["project"],
-            "fields": {**fields, "category": category, "codex_session": binding["session"],
+            "fields": {**fields, "category": category, "codex_session": binding["codex_session"],
                        "event_key": event},
             "inputs": [{"role": "references", "target": value} for value in references],
         }
@@ -200,7 +278,7 @@ class Bridge:
                 return old["offset"]
             offset = db.execute("SELECT COALESCE(MAX(offset)+1,0) FROM entry WHERE session=?",
                                 (session,)).fetchone()[0]
-            job = db.execute("SELECT job FROM binding WHERE session=?", (session,)).fetchone()[0]
+            job = binding["job"]
             stream_offset = None
             if job:
                 stream_offset = db.execute(
@@ -246,6 +324,11 @@ class Bridge:
             ).fetchall()
         deadline = time.monotonic() + budget
         retry = {}
+        if rows:
+            try:
+                self.require_lab(binding["lab"])
+            except DeliveryError as error:
+                return {**self.status(binding, offset), "local_retry": str(error)}
         for row in rows:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -267,25 +350,57 @@ class Bridge:
                            (record, session, row["offset"]))
         return {**self.status(binding, offset), **retry}
 
+    def pending_destinations(self, binding):
+        session = binding["codex_session"]
+        with self.open() as db:
+            destinations = db.execute(
+                "SELECT DISTINCT b.session, b.project, b.lab FROM binding b JOIN entry e USING(session) "
+                "WHERE b.project=? AND (e.record IS NULL OR (e.job IS NOT NULL AND e.head IS NULL)) "
+                "AND b.session IN (SELECT destination FROM turn_route WHERE session=? UNION SELECT ?) "
+                "ORDER BY b.session", (binding["project"], session, session),
+            ).fetchall()
+        return [row for row in destinations if self.lab_allowed(row)]
+
     def flush(self, binding):
-        """Archive locally first. Retry reports without changing their offsets."""
-        local = self.archive(binding)
-        lab, job, session = (binding[k] for k in ("lab", "job", "session"))
-        if not job or not local["pending_reports"]:
-            return local
+        """Retry this chat's accepted records using their original lab and assignment."""
+        destinations = self.pending_destinations(binding)
+        destinations.sort(key=lambda row: row["session"] != binding["session"])
+        deadline = time.monotonic() + 2
+        progress = {}
+        for destination in destinations:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            local = self.archive(destination, budget=remaining)
+            if "local_retry" in local:
+                progress["local_retry"] = local["local_retry"]
+        if not destinations:
+            return self.status(binding)
+
         lock = self.state.with_suffix(".delivery.lock")
         with lock.open("a") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                return {**local, "report_retry": "Delivery is in progress."}
-            try:
-                delivery = self.deliver(lab, job, session)
-            except DeliveryError as error:
-                delivery = {"report_retry": str(error)}
-        return {**local, **self.status(binding), **delivery}
+                return {**self.status(binding), **progress, "report_retry": "Delivery is in progress."}
+            deadline = time.monotonic() + 5
+            for destination in destinations:
+                with self.open() as db:
+                    jobs = db.execute(
+                        "SELECT job FROM entry WHERE session=? AND job IS NOT NULL AND head IS NULL "
+                        "GROUP BY job ORDER BY min(offset)", (destination["session"],),
+                    ).fetchall()
+                for (job,) in jobs:
+                    if time.monotonic() >= deadline:
+                        return {**self.status(binding), **progress, "report_retry": "Delivery budget expired."}
+                    try:
+                        self.require_lab(destination["lab"])
+                        progress.update(self.deliver(destination["lab"], job, destination["session"], deadline))
+                    except DeliveryError as error:
+                        progress["report_retry"] = str(error)
+        return {**self.status(binding), **progress}
 
-    def deliver(self, lab, job, session):
+    def deliver(self, lab, job, session, deadline):
         with self.open() as db:
             candidates = db.execute(
                 "SELECT * FROM entry WHERE session=? AND job=? AND head IS NULL "
@@ -298,10 +413,8 @@ class Bridge:
             pending.append(row)
         if not pending:
             return {}
-        started = time.monotonic()
-
         def call(*args, data=None):
-            remaining = 5 - (time.monotonic() - started)
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise DeliveryError("Delivery budget expired. Queued records are retained.")
             return self.call(lab, *args, data=data, timeout=min(3, remaining))

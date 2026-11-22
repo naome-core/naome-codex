@@ -27,7 +27,26 @@ NAOME Codex records work in the local NAOME lab archive. It uses the released `n
    codex plugin add naome-codex@naome-local
    ```
 
-3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session inside the workspace. The hooks supply the session’s local recorder context.
+3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session inside the workspace. Each user message receives its own recorder context.
+
+## Multiple labs in one chat
+
+For a project with multiple labs, replace its `lab` path and optional `job` with `labs` and an optional `default_lab`:
+
+```json
+{
+  "workspace": "/absolute/path/to/project",
+  "default_lab": "A",
+  "labs": {
+    "A": {"directory": "/absolute/path/to/lab-a"},
+    "B": {"directory": "/absolute/path/to/lab-b"}
+  }
+}
+```
+
+A lab can have its own optional `job` and its own node and orchestrator configuration. Put `/lab B` on the first line to select B for the current turn, or `/lab default B` to select B now and set it as this chat’s default. The equivalent leading sentences `Use Lab B for this turn` and `Use Lab B from now on` also work. Place the task on the following lines. A bare reference to another configured lab or a comparison of labs leaves the destination open unless the prompt explicitly selects one. When several labs are configured and the project has no default, start by selecting one.
+
+Turn routing fixes the local archive and any report assignment when the user message is admitted. Later hooks use that turn’s route. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again. Single-lab configuration and existing journal entries are supported.
 
 ## Capture and delivery
 
@@ -45,6 +64,7 @@ Run the integration test with the tested `naome` release in `~/.cargo/bin/naome`
 
 ```sh
 python3 tests/integration.py
+python3 tests/turn_routing.py
 ```
 
-The test uses isolated node and workspace directories. It exercises local capture without a running node, configured orchestrator, or assignment. It checks local retry, two project scopes, lost report acknowledgments, and readback from a real orchestrator.
+The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal.

@@ -3,7 +3,7 @@ name: naome-lab-research
 description: Record research in the enrolled local NAOME lab, including hypotheses, methods, evidence, findings, limitations, and corrections.
 ---
 
-Use this workflow when the NAOME session hook supplies a binding token. Use the token only in NAOME MCP tool arguments.
+Use this workflow when the Naome `UserPromptSubmit` hook supplies a binding token. Use only the current turn's token and only in Naome MCP tool arguments. The hook fixes the lab for the turn. If no lab was selected and the user asks to record evidence, ask which configured lab to use.
 
 - Use `research_status` to check local archive status and any current assignment.
 - Record the question, material hypotheses, and the intended method before work when they are available.

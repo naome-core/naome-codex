@@ -89,12 +89,12 @@ def main():
             }}])[0]["result"]
             return row["isError"], row["content"][0]["text"]
 
-        def token_for(workspace, session):
-            result = hook("SessionStart", workspace, session, source="startup")
+        def token_for(workspace, session, turn="turn-one"):
+            result = hook("UserPromptSubmit", workspace, session, prompt="Continue.", turn_id=turn)
             context = result["hookSpecificOutput"]["additionalContext"]
             return re.search(r"binding_token ([A-Za-z0-9_-]+)", context).group(1)
 
-        assert hook("SessionStart", others, "unrelated", source="startup") == {}
+        assert hook("UserPromptSubmit", others, "unrelated", prompt="Continue.") == {}
         assert not (temp / "queue.sqlite").exists()
         responses = mcp([{"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
                          {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"}])
@@ -113,7 +113,7 @@ def main():
         lab_config = json.loads(lab_config_path.read_text())
         lab_config_path.write_text(json.dumps({**lab_config, "peers": []}))
         assert not cli(hub, "status")["running"] and not cli(lab, "status")["running"]
-        token = token_for(work, "repository-session")
+        token = token_for(work, "repository-session", "offline-capture")
         assert json.loads(tool("research_status", token)[1])["job"] is None
         error, response = tool("record_research", token, category="hypothesis",
                                title="Offline hypothesis", summary="The archive is available locally.",
@@ -129,7 +129,7 @@ def main():
         status = json.loads(response)
         assert not error and status["pending_local"] == 1 and status["local_record"] is None
         config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
-        hook("UserPromptSubmit", work, "repository-session")
+        token = token_for(work, "repository-session", "offline-retry")
         recovered = json.loads(tool("research_status", token)[1])
         assert recovered["pending_local"] == recovered["pending_reports"] == 0
         assert show_local(lab, recovered["local_record"])["subject"] == "Deferred locally"
@@ -145,7 +145,7 @@ def main():
             desk_job = cli(hub, "research", "assign", lab_id, "desk-research", "Compare two public sources")
             until(lambda: cli(lab, "research", "jobs"),
                   lambda jobs: {repository_job, desk_job} <= {job["id"] for job in jobs if job["input_ready"]})
-            hook("UserPromptSubmit", work, "repository-session")
+            token = token_for(work, "repository-session")
             desk_token = token_for(desk, "desk-session")
             assert token != desk_token
             extra = token_for(work, "second-repository-session")
@@ -183,9 +183,7 @@ def main():
             failed = json.loads(tool("retry_research_delivery", token)[1])
             assert failed["pending_local"] == 0 and failed["pending_reports"] == 2 and "report_retry" in failed
             config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
-            assert "binding_token" in hook("UserPromptSubmit", work, "repository-session")[
-                "hookSpecificOutput"
-            ]["additionalContext"]
+            token = token_for(work, "repository-session", "turn-two")
             assert json.loads(tool("research_status", token)[1])["pending_reports"] == 0
 
             assert tool("record_research", token, category="result", title="Missing source",
@@ -193,7 +191,7 @@ def main():
             failed, result = tool("record_research", token, category="result", title="Operation completed",
                                   summary="The observed command returned zero.", sources=["tool:turn-one:call-one"])
             assert not failed and json.loads(result)["pending_reports"] == 0
-            assert hook("Stop", work, "repository-session") == {}
+            assert hook("Stop", work, "repository-session", turn_id="turn-two") == {}
             assert not tool("record_research", desk_token, category="result", title="Source comparison",
                             summary="The supplied documents describe different populations.",
                             sources=["Case fixture A, section 1", "Case fixture B, section 2"])[0]
