@@ -50,6 +50,7 @@ def main():
             "import json, os, sys\nfrom pathlib import Path\n"
             f"binary = {str(NAOME)!r}\n"
             "if sys.argv[-2:] == ['archive', 'search-session']:\n"
+            "    assert Path.cwd() == Path(sys.argv[sys.argv.index('--directory') + 1])\n"
             f"    with Path({str(launches)!r}).open('a') as log: log.write(str(os.getpid()) + '\\n')\n"
             f"    if Path({str(revoke)!r}).exists():\n"
             f"        config = Path({str(config)!r})\n"
@@ -77,8 +78,15 @@ def main():
             assert token, response
             return token.group(1)
 
-        with subprocess.Popen([sys.executable, ENTRY, "mcp"], text=True, env=env,
+        launch_dir = root / "plugin-cache"
+        launch_dir.mkdir()
+        with subprocess.Popen([sys.executable, ENTRY, "mcp"], text=True, env=env, cwd=launch_dir,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE) as server:
+            server.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+            server.stdin.flush()
+            assert "tools" in json.loads(server.stdout.readline())["result"]["capabilities"]
+            # Reinstalling the plugin can remove a live server's original working directory.
+            launch_dir.rmdir()
             def call(token, query, **extra):
                 server.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
                     "name": "search_research", "arguments": {"binding_token": token, "query": query, **extra},
@@ -89,7 +97,12 @@ def main():
             def result(token, query, **extra):
                 reply = call(token, query, **extra)
                 assert not reply["isError"], reply
-                return json.loads(reply["content"][0]["text"])
+                report = json.loads(reply["content"][0]["text"])
+                if report["hits"]:
+                    assert reply["structuredContent"] == report and "_meta" not in reply
+                else:
+                    assert "structuredContent" not in reply
+                return report
 
             try:
                 token = bind("a", "Find previous calibration work.")
@@ -125,23 +138,25 @@ def main():
                     assert launches.read_text() == native_worker
                     print("PASS: an offline German paraphrase and hybrid query found the approved result.")
 
-                token_b = bind("b", "/lab B\nLook up the thermal run.")
-                assert call(token, approved)["isError"]
-                assert call(token_b, only_b)["isError"]
+                assert call(token, only_b, lab="B")["isError"]
                 lab_settings = settings["projects"]["calibration"]["labs"]["B"]
                 lab_settings["search_head"] = head_b
                 configure()
                 revoke.touch()
-                rejected = call(token_b, only_b)
-                assert rejected["isError"] and only_b not in json.dumps(rejected)
+                rejected = call(token, only_b, lab="B")
+                assert rejected["isError"] and only_b not in json.dumps(rejected) and "structuredContent" not in rejected
                 assert "changed while the query was running" in rejected["content"][0]["text"]
-                assert call(token_b, only_b)["isError"]
+                assert call(token, only_b, lab="B")["isError"]
                 revoke.unlink()
                 configure()
-                response = result(token_b, only_b)
+                response = result(token, only_b, lab="B")
                 assert response["lab"] == "B" and response["head"] == head_b
                 assert response["hits"][0]["record_id"] == only_b
-                assert result(token_b, approved)["hits"] == []
+                assert result(token, approved, lab="B")["hits"] == []
+                assert result(token, approved)["lab"] == "A"
+                next_token = bind("b", "/lab B\nLook up the thermal run.")
+                assert call(token, approved)["isError"]
+                assert result(next_token, approved)["lab"] == "A"
                 assert all(not cli(lab, "status")["running"] for lab in (lab_a, lab_b))
             finally:
                 server.stdin.close()

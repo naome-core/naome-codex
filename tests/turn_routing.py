@@ -62,12 +62,13 @@ def main():
                 f"os.execv({str(NAOME)!r}, [{str(NAOME)!r}, *args])\n"
             )
             wrapper.chmod(0o700)
-            config.write_text(json.dumps({
+            settings = {
                 "naome": str(wrapper), "projects": {"research": {
                     "workspace": str(workspace), "default_lab": "A",
                     "labs": {name: {"directory": str(lab)} for name, lab in zip("AB", labs)},
                 }},
-            }))
+            }
+            config.write_text(json.dumps(settings))
             env = dict(os.environ, NAOME_CODEX_CONFIG=str(config), NAOME_CODEX_STATE=str(journal))
             session = "one-codex-chat"
 
@@ -100,13 +101,13 @@ def main():
                 return entry("hook", {"hook_event_name": event, "turn_id": turn,
                                       "session_id": session, "cwd": str(workspace), **fields})
 
-            def choose(turn, prompt, lab=None):
+            def begin(turn, prompt, lab):
                 result = hook("UserPromptSubmit", turn, prompt=prompt)
                 context = result["hookSpecificOutput"]["additionalContext"]
                 if lab is None:
-                    assert "No Naome writes are enabled" in context and "binding_token " not in context, context
-                    return None
-                assert f"selected lab {lab} for this turn" in context, context
+                    assert "No lab is selected for recording" in context, context
+                else:
+                    assert f"selected lab {lab} for this turn" in context, context
                 return re.search(r"binding_token ([A-Za-z0-9_-]+)", context)[1]
 
             def tool(token, name, error=False, **fields):
@@ -125,17 +126,20 @@ def main():
                             tool_input={"command": "fixture"}, tool_response={"exit_code": 0})
 
             tool("legacy", "research_status", error=True)
-            a = choose("one", "Record the first result.", "A")
+            a = begin("one", "Record the first result.", "A")
             first = record(a, "Result in lab A")
             assert (first["lab"], first["job"]) == ("A", jobs[0])
             halt_local.touch()
             halt_report.touch()
-            b = choose("two", "Für diesen Schritt bitte Labor B verwenden.\nRecord a second result.", "B")
+            b = begin("two", "Für diesen Schritt bitte Labor B verwenden.\nRecord a second result.", "A")
+            assert tool(b, "select_lab", lab="B")["job"] == jobs[1]
             pending = record(b, "Deferred result in lab B")
             assert (pending["lab"], pending["job"]) == ("B", jobs[1])
             assert pending["local_record"] is None and pending["pending_local"] == 1, pending
+            assert tool(b, "list_recent_research")["records"] == []
             assert "pending local queue" in json.dumps(tool_event("two", "deferred-tool"))
-            a2 = choose("three", "Continue with the chat default.", "A")
+            tool(b, "select_lab", error=True, lab="A", remember=True)
+            a2 = begin("three", "Continue with the chat default.", "A")
             assert len({a, a2, b}) == 3
             status = tool(a2, "research_status")
             assert status["pending_local"] == status["pending_reports"] == 0, status
@@ -146,7 +150,8 @@ def main():
             )
             record(b, "A stale token must never write", error=True)
             assert first["local_record"] not in archive_records(labs[1])
-            choose("two", "/lab default A")
+            assert "no longer" in hook("UserPromptSubmit", "two", prompt="/lab default A")[
+                "hookSpecificOutput"]["additionalContext"]
             tool(b, "research_status", error=True)
 
             halt_local.unlink()
@@ -183,17 +188,26 @@ def main():
                 all_recorded = {first["local_record"], *b_records}
                 assert observed & all_recorded == expected
 
-            choose("four", "Vergleiche die Ergebnisse von Labor A und B und speichere den Befund.")
-            assert tool_event("four", "ambiguous-tool") == {}
+            project = settings["projects"]["research"]
+            del project["default_lab"]
+            config.write_text(json.dumps(settings))
+            unselected = begin("four", "Vergleiche die Ergebnisse von Labor A und B.", None)
+            assert tool_event("four", "unselected-tool") == {}
+            record(unselected, "No write without a lab", error=True)
+            tool(unselected, "list_recent_research", error=True)
+            assert tool(unselected, "list_recent_research", lab="A")["records"][0]["record_id"] == first["local_record"]
             tool(a2, "research_status", error=True)
-            choose("five", "/lab unknown")
-            choose("six", "Ab jetzt Labor B.", "B")
-            choose("seven", "Continue here.", "B")
-            choose("eight", "/lab A", "A")
-            b2 = choose("nine", "Continue here.", "B")
+            tool(unselected, "select_lab", error=True, lab="unknown")
+            assert tool(unselected, "select_lab", lab="B", remember=True)["lab"] == "B"
+            begin("five", "Continue here.", "B")
+            a3 = begin("six", "/lab A", "B")
+            assert tool(a3, "select_lab", lab="A")["lab"] == "A"
+            b2 = begin("seven", "Continue here.", "B")
+            b_receipts = tool(b2, "list_recent_research", limit=10)
+            assert b_receipts["lab"] == "B"
+            assert [item["title"] for item in b_receipts["records"]] == ["Deferred result in lab B"]
             assert hook("UserPromptSubmit", "outside", prompt="Continue.", cwd=str(temp)) == {}
             tool(b2, "research_status", error=True)
-            choose("ten", "/lab A\n/lab B")
             with sqlite3.connect(journal) as db:
                 assert db.execute("SELECT count(*) FROM entry WHERE record IS NULL OR (job IS NOT NULL AND head IS NULL)").fetchone()[0] == 0
             print("PASS: one chat, two labs and orchestrators, fixed turn routing, delayed local and network delivery")
