@@ -10,6 +10,7 @@ import sys
 from autostart import schedule
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 from project import PROJECT, create_project
+from research_card import RESOURCE, TOOL_META, ResourceNotFound, card_data, read_resource
 
 ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired)
 INPUT_LIMIT = 8 * 1024 * 1024
@@ -17,7 +18,7 @@ TOKEN = {"type": "string", "description": "The local lab token supplied by the c
 TOKENS = {"binding_token": TOKEN}
 
 
-def tool(name, description, properties, required):
+def tool(name, description, properties, required, **metadata):
     return {
         "name": name,
         "description": description,
@@ -25,6 +26,7 @@ def tool(name, description, properties, required):
             "type": "object", "properties": properties,
             "required": required, "additionalProperties": False,
         },
+        **metadata,
     }
 
 
@@ -52,10 +54,14 @@ TOOLS = [
              },
              "linked_records": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
          },
-         ["binding_token", "category", "title", "summary", "sources"]),
+         ["binding_token", "category", "title", "summary", "sources"], _meta=TOOL_META),
     tool("retry_research_delivery", "Retry local capture and delivery of any assigned research reports.",
          TOKENS, ["binding_token"]),
 ]
+
+
+def tool_result(receipt):
+    return {"content": [{"type": "text", "text": encode(receipt)}], "isError": False}
 
 
 def do_tool(name, arguments):
@@ -63,15 +69,15 @@ def do_tool(name, arguments):
         raise ValueError("Tool arguments must be an object.")
     bridge = Bridge()
     if name == "create_project":
-        return create_project(bridge, arguments)
+        return tool_result(create_project(bridge, arguments))
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
         raise ValueError("The active Codex turn has no valid Naome lab token.")
     if name == "research_status":
-        return {"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
-                **bridge.status(binding, include_chat=True)}
+        return tool_result({"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
+                            **bridge.status(binding, include_chat=True)})
     if name == "retry_research_delivery":
-        return bridge.flush(binding)
+        return tool_result(bridge.flush(binding))
     if name != "record_research":
         raise ValueError("Unknown NAOME tool.")
     category = arguments["category"]
@@ -91,15 +97,17 @@ def do_tool(name, arguments):
     if category == "correction" and not supplied:
         raise ValueError("A correction must link to the original archived record.")
     references = sorted(set(supplied))
+    title = title.strip()
     fields = {"summary": summary.strip(), "sources": sources, "recorded_by": "Codex MCP",
               "codex_turn": binding["turn"]}
-    event = "research:" + digest([category, title.strip(), fields, references])
-    offset = bridge.enqueue(binding, event, category, title.strip(), fields, references)
+    event = "research:" + digest([category, title, fields, references])
+    offset = bridge.enqueue(binding, event, category, title, fields, references)
     local = bridge.archive(binding, offset)
     delivered = bridge.flush(binding) if binding["job"] else {}
-    return {"offset": offset, "lab": binding["lab_name"], "job": binding["job"],
-            **delivered, **bridge.status(binding, offset),
-            **{key: value for key, value in local.items() if key == "local_retry"}}
+    receipt = {"offset": offset, "lab": binding["lab_name"], "job": binding["job"],
+               **delivered, **bridge.status(binding, offset),
+               **{key: value for key, value in local.items() if key == "local_retry"}}
+    return {**tool_result(receipt), **card_data(receipt, category, title, fields, references)}
 
 
 def context_output(binding, progress):
@@ -207,15 +215,20 @@ def dispatch(request):
         supported = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
         chosen = details.get("protocolVersion")
         return {"protocolVersion": chosen if isinstance(chosen, str) and chosen in supported else "2025-06-18",
-                "capabilities": {"tools": {}}, "serverInfo": {"name": "Naome", "version": "0.1.0"}}
+                "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "Naome", "version": "0.1.0"}}
     if method == "tools/list":
         return {"tools": TOOLS}
+    if method == "resources/list":
+        return {"resources": [RESOURCE]}
+    if method == "resources/templates/list":
+        return {"resourceTemplates": []}
+    if method == "resources/read":
+        return read_resource(details["uri"])
     if method == "ping":
         return {}
     if method == "tools/call":
         try:
-            result = do_tool(details["name"], details.get("arguments", {}))
-            return {"content": [{"type": "text", "text": encode(result)}], "isError": False}
+            return do_tool(details["name"], details.get("arguments", {}))
         except ERRORS as error:
             message = str(error) if isinstance(error, (ValueError, DeliveryError)) else (
                 "The local NAOME research bridge could not process the request."
@@ -242,6 +255,10 @@ def mcp():
             body = {"result": result} if result is not None else {
                 "error": {"code": -32601, "message": "Method not found"}
             }
+        except ResourceNotFound as error:
+            body = {"error": {"code": -32002, "message": str(error)}}
+        except OSError:
+            body = {"error": {"code": -32603, "message": "Naome could not read the UI resource."}}
         except (KeyError, TypeError, ValueError):
             body = {"error": {"code": -32600, "message": "Invalid request"}}
         print(encode({"jsonrpc": "2.0", "id": request_id, **body}), flush=True)

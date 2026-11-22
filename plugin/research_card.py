@@ -1,0 +1,49 @@
+"""Presentation of a locally acknowledged research record over MCP Apps."""
+
+import base64
+from functools import lru_cache
+from pathlib import Path
+
+from bridge import ID
+
+URI = "ui://naome/research-card-v1.html"
+MIME_TYPE = "text/html;profile=mcp-app"
+DETAILS_KEY = "naome/research-block"
+RESOURCE = {"uri": URI, "name": "Naome research block", "mimeType": MIME_TYPE}
+TOOL_META = {"ui": {"resourceUri": URI}, "openai/ui": {"preferredModelDisplayMode": "inline"}}
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+class ResourceNotFound(ValueError):
+    """The server does not provide the requested resource URI."""
+
+
+@lru_cache(maxsize=1)
+def card_html():
+    html = (ASSETS / "research-card.html").read_text(encoding="utf-8")
+    css = (ASSETS / "research-card.css").read_text(encoding="utf-8")
+    logo = base64.b64encode((ASSETS / "naome-card-logo.png").read_bytes()).decode("ascii")
+    return html.replace("__NAOME_CARD_STYLES__", css).replace("__NAOME_CARD_LOGO__", f"data:image/png;base64,{logo}")
+
+
+def read_resource(uri):
+    if uri != URI:
+        raise ResourceNotFound("Unknown Naome resource.")
+    return {"contents": [{**RESOURCE, "text": card_html(), "_meta": {"ui": {
+        "prefersBorder": False,
+        "csp": {"connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": []},
+    }}}]}
+
+
+def card_data(receipt, category, title, fields, references):
+    record_id = receipt["local_record"]
+    if not isinstance(record_id, str) or not ID.fullmatch(record_id):
+        return {}
+    summary = fields["summary"]
+    preview = summary if len(summary) <= 160 else summary[:159].rstrip() + "…"
+    return {
+        "structuredContent": {"record_id": record_id, "title": title, "category": category,
+                              "lab": receipt["lab"], "summary": preview},
+        "_meta": {DETAILS_KEY: {"record_id": record_id, "summary": summary, "sources": fields["sources"],
+                               "linked_records": references}},
+    }

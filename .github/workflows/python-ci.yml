@@ -41,6 +41,8 @@ jobs:
           if desktop_version != plugin_version:
               raise SystemExit(f'Plugin manifest versions differ: {desktop_version} and {plugin_version}')
           PY
+      - name: Test the research card widget
+        run: node tests/research_card.mjs
 
   integration:
     name: Python integration (macOS ARM64, ${{ matrix.python }})
