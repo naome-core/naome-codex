@@ -57,6 +57,12 @@ A lab can have its own optional `job` and its own node and orchestrator configur
 
 Turn routing fixes the local archive and any report assignment when the user message is admitted. Later hooks use that turn’s route. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again. Single-lab configuration and existing journal entries are supported.
 
+## Start a network when a Codex turn begins
+
+Set `"auto_start": true` on a project entry in the local Naome configuration to opt in. When a turn selects a network lab, Naome starts the local lab in a detached process. If the selected lab belongs to a dedicated local network created by `create_project`, the same worker also starts its matching orchestrator. A stopped node will be started again on the next matching turn while the option is enabled.
+
+Offline projects continue to use the local archive on their own. The hook does not wait for either node. Local records and already-known assignments remain usable during startup. Requests that start without an available assignment keep their evidence local. Startup diagnostics are written to `autostart.log` beside the plugin journal.
+
 ## Capture and delivery
 
 - The recorder stores tool completion metadata and turn interruptions or stops. A tool receipt includes its observed identities, content digests, and available machine status. Full prompts, raw tool bodies, and transcripts stay outside this automatic capture.
@@ -75,6 +81,7 @@ Run the integration test with the tested `naome` release in `~/.cargo/bin/naome`
 python3 tests/integration.py
 python3 tests/turn_routing.py
 python3 tests/project_setup.py
+python3 tests/autostart.py
 ```
 
-The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries.
+The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries. The autostart test keeps both nodes stopped while writing and reading a record, then verifies that they start and connect without starting a second pair.

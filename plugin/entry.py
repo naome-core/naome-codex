@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 
+from autostart import schedule
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 from project import PROJECT, create_project
 
@@ -147,7 +148,12 @@ def hook(payload):
                 context += (f" If the user asked to record evidence, ask once which configured lab to use ({choices})."
                             " The user can put `/lab <name>` on the first line of the next message.")
             return prompt_context(context)
-        return context_output(binding, bridge.flush(binding))
+        progress = bridge.flush(binding)
+        notice = schedule(bridge, binding)
+        response = context_output(binding, progress)
+        if notice:
+            response["systemMessage"] = notice
+        return response
     binding = bridge.turn_binding(project, session, turn)
     if not binding:
         return {}
