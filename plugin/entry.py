@@ -109,8 +109,10 @@ def context_output(binding, progress):
         association = "Research is recorded in the local lab archive. No assignment is selected."
     context = (
         f"Naome selected lab {binding['lab_name']} for this turn. {association} "
-        f"Use the Naome tools to record questions, hypotheses and methods before work, "
-        f"and material findings and limitations with evidence afterward. "
+        "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill. "
+        "Use record_research for the question, relevant hypotheses and method before substantive work, "
+        "and for supported findings and material limitations afterward. "
+        "For routine edits, maintenance and status checks, rely on automatic hook capture unless the user asks for a research record. "
         f"Use binding_token {binding['token']} only for this turn. "
         f"Keep the token out of research records and chat replies. "
         f"Report unknowns explicitly and use only evidence authorized for the project. "

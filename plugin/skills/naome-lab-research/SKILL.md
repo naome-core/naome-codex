@@ -1,9 +1,11 @@
 ---
 name: naome-lab-research
-description: Create Naome projects and record significant research steps, evidence, limitations, and corrections in the lab selected for the current Codex turn.
+description: Design experiments, test hypotheses, compare prototypes or benchmarks, and investigate unexpected research results. Record the evidence and limitations in the selected Naome lab. Also create Naome projects on request.
 ---
 
 # Naome research workflow
+
+Apply this workflow to substantive R&D in an enrolled workspace when the request describes the research goal. For straightforward edits, maintenance, and status checks, use automatic hook capture unless the user requests a research record.
 
 ## Use the lab selected for the turn
 

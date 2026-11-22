@@ -101,6 +101,18 @@ def main():
 
         assert hook("UserPromptSubmit", others, "unrelated", prompt="Continue.") == {}
         assert not (temp / "queue.sqlite").exists()
+        for session, prompt in (
+            ("performance-research", "Test the hypothesis that the new implementation uses less memory."),
+            ("expression-research", "Investigate why two analyses of public gene expression data disagree."),
+            ("clinical-research", "Compare the primary endpoints of two published clinical trials."),
+            ("expression-edit", "Fix the misspelled expression unit in a figure caption."),
+            ("clinical-edit", "Alphabetize the clinical trial citations without changing their content."),
+        ):
+            context = hook("UserPromptSubmit", work, session, prompt=prompt)["hookSpecificOutput"]["additionalContext"]
+            assert "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill." in context
+            assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
+            assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
+
         responses = mcp([{"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
                          {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"}])
         assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
