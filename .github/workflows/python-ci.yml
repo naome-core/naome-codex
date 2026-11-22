@@ -1,0 +1,69 @@
+name: Python CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Python quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.9'
+      - name: Compile Python and validate plugin manifests
+        run: |
+          python -m compileall -q plugin tests
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for root in (Path('.agents'), Path('plugin')):
+              for manifest in sorted(root.rglob('*.json')):
+                  print(manifest, flush=True)
+                  with manifest.open(encoding='utf-8') as manifest_file:
+                      json.load(manifest_file)
+          PY
+
+  integration:
+    name: Python integration (macOS ARM64, ${{ matrix.python }})
+    runs-on: macos-15
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.15']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install NAOME Network v0.2.0
+        run: |
+          naome_binary="$RUNNER_TEMP/naome"
+          curl --fail --location --silent --show-error --retry 3 \
+            --output "$naome_binary" \
+            https://github.com/naome-core/naome-network/releases/download/v0.2.0/naome-macos-arm64
+          printf '%s  %s\n' 458eda0facbc9ed87b9f544143475b9b992b3649a1cd2507882017e67a6b4f46 \
+            "$naome_binary" | shasum -a 256 -c
+          chmod +x "$naome_binary"
+          printf 'NAOME_TEST_BINARY=%s\n' "$naome_binary" >> "$GITHUB_ENV"
+      - name: Run integration tests
+        run: |
+          python tests/integration.py
+          python tests/turn_routing.py
+          python tests/project_setup.py
+          python tests/autostart.py
