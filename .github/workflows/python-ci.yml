@@ -75,6 +75,7 @@ jobs:
       - name: Run integration tests
         run: |
           python tests/integration.py
+          python tests/archive_search.py
           python tests/turn_routing.py
           python tests/project_setup.py
           python tests/autostart.py

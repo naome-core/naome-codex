@@ -11,6 +11,12 @@ Apply this workflow to substantive R&D in an enrolled workspace when the request
 
 Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it only in Naome tool arguments. Keep tokens out of records and replies. If a requested write has no selected lab, ask once which configured lab to use. Use the selected lab even when the orchestrator is unavailable or the turn has no research assignment.
 
+The lab binding identifies the destination. Follow the user's request and workspace instructions for permission to record and transfer evidence. For authorized local notes, set `delivery` to `local`. Use assigned delivery only when the work authorizes submission to the assigned orchestrator. If workspace policy requires explicit permission and it is absent, continue the allowed research. If a write is necessary to the user-requested outcome, ask once for the specific operation and destination. A host approval denial remains in force. Continue the unaffected work and retry the write only after new authorization.
+
+## Find prior lab evidence
+
+When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Report the returned snapshot and any coverage limits that affect the conclusion. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
+
 ## Record material research milestones
 
 - At the start of substantive research, record the question and planned method in separate entries. Record a hypothesis when applicable. For an experiment, capture the inputs, comparison, and the observation that would change the conclusion before running it.

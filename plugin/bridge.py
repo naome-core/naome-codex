@@ -125,11 +125,13 @@ class Bridge:
             raise DeliveryError("NAOME returned an unreadable response.") from error
         return lines if args[:2] == ("research", "stream") else (lines[0] if lines else None)
 
-    def lab_allowed(self, binding):
+    def configured_lab(self, binding):
         project = self.projects.get(binding["project"])
-        return project is not None and any(
-            lab["path"] == binding["lab"] for lab in configured_labs(project)[0].values()
-        )
+        if project is not None:
+            return next((lab for lab in configured_labs(project)[0].values() if lab["path"] == binding["lab"]), None)
+
+    def lab_allowed(self, binding):
+        return self.configured_lab(binding) is not None
 
     @staticmethod
     def route(db, where, parameters):

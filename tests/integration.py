@@ -114,6 +114,9 @@ def main():
             context = hook("UserPromptSubmit", work, session, prompt=prompt)["hookSpecificOutput"]["additionalContext"]
             assert "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill." in context
             assert "use record_research for separate question and method entries" in context
+            assert "Follow the user and workspace instructions for permission to record and send evidence." in context
+            assert "Use delivery=local unless assignment delivery is authorized." in context
+            assert "If recording is restricted or an approval is denied, continue the allowed work" in context
             assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
             assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
 
@@ -128,8 +131,11 @@ def main():
         assert "resources" in responses[0]["result"]["capabilities"]
         descriptors = {item["name"]: item for item in responses[1]["result"]["tools"]}
         assert descriptors.keys() == {
-            "create_project", "research_status", "record_research", "retry_research_delivery",
+            "create_project", "research_status", "search_research", "record_research", "retry_research_delivery",
         }
+        assert descriptors["search_research"]["annotations"]["readOnlyHint"] is True
+        assert descriptors["record_research"]["annotations"]["readOnlyHint"] is False
+        assert descriptors["record_research"]["inputSchema"]["properties"]["delivery"]["default"] == "assigned"
         assert {name: item["_meta"] for name, item in descriptors.items() if "_meta" in item} == {
             "record_research": {"ui": {"resourceUri": uri}, "openai/ui": {"preferredModelDisplayMode": "inline"}},
         }
@@ -253,9 +259,18 @@ def main():
 
             assert tool("record_research", token, category="result", title="Missing source",
                         summary="This result has no evidence.", sources=[])[0]
-            failed, result = tool("record_research", token, category="result", title="Operation completed",
-                                  summary="The observed command returned zero.", sources=["tool:turn-one:call-one"])
-            assert not failed and json.loads(result)["pending_reports"] == 0
+            operation = {"category": "result", "title": "Operation completed",
+                         "summary": "The observed command returned zero.", "sources": ["tool:turn-one:call-one"]}
+            failed, result = tool("record_research", token, **operation)
+            assigned = json.loads(result)
+            assert not failed and assigned["pending_reports"] == 0 and assigned["job"] == repository_job
+            failed, result = tool("record_research", token, delivery="local", **operation)
+            local_only = json.loads(result)
+            assert not failed and local_only["pending_reports"] == 0 and local_only["job"] is None
+            assert local_only["local_record"] and local_only["local_record"] != assigned["local_record"]
+            assert "naome_job" not in show_local(lab, local_only["local_record"])["fields"]
+            assert json.loads(tool("record_research", token, delivery="local", **operation)[1]) == local_only
+            assert tool("record_research", token, delivery="unrecognized", **operation)[0]
             assert hook("Stop", work, "repository-session", turn_id="turn-two") == {}
             assert not tool("record_research", desk_token, category="result", title="Source comparison",
                             summary="The supplied documents describe different populations.",
@@ -276,6 +291,7 @@ def main():
             for row in delivered:
                 head = row["head"]
                 discovered = cli(hub, "archive", "discover", head, "--budget", "100")
+                assert local_only["local_record"] not in discovered["ids"]
                 docs = [cli(hub, "archive", "show", head, item) for item in discovered["ids"]]
                 assert len(docs) == 1 and docs[0]["fields"]["naome_job"] == row["job"]
                 assert "private text" not in json.dumps(docs) and "private output" not in json.dumps(docs)

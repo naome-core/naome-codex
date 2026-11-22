@@ -57,6 +57,32 @@ A lab can have its own optional `job` and its own node and orchestrator configur
 
 Turn routing fixes the local archive and any report assignment when the user message is admitted. Later hooks use that turn’s route. Pending work retains its original destination across retries, even after another turn selects a different lab. Removed lab destinations remain pending until the original lab is configured again. Single-lab configuration and existing journal entries are supported.
 
+## Search an approved lab snapshot
+
+Set `search_head` to a snapshot ID approved for the project. For a single-lab project, put it beside `lab`. For named labs, set it on the relevant entry in `labs`:
+
+```json
+{
+  "directory": "/absolute/path/to/lab-a",
+  "search_head": "<approved snapshot ID>"
+}
+```
+
+Approve an inventory whose records and dependencies may be indexed locally for that project. The plugin searches that exact snapshot in the lab selected for the current turn and checks each returned link with an exact lookup in the same project and snapshot. To include newly archived material, review and approve a newer snapshot. Search returns the snapshot ID, coverage and, when available, source locations and short excerpts.
+
+`search_research` accepts a question, keywords, or a complete record ID. It reuses the native `naome archive search-session` worker while the destination and runtime stay the same, and works while the node is stopped. Exact IDs and lexical search work without a model. To enable hybrid and semantic ranking, set the paths in the local Naome Codex configuration:
+
+```json
+{
+  "search": {
+    "model": "/absolute/path/to/embeddinggemma-2",
+    "python": "/absolute/path/to/inference-environment/bin/python"
+  }
+}
+```
+
+The Python field is optional and defaults to `python3`. Set up the checkpoint and inference environment using the [Network release guide](https://github.com/naome-core/naome-network/releases/tag/v0.4.0). With a model configured, natural-language searches default to hybrid ranking. Semantic and hybrid ranking use the existing local checkpoint. The native worker can update its derived search index during a query.
+
 ## Start a network when a Codex turn begins
 
 Set `"auto_start": true` on a project entry in the local Naome configuration to opt in. When a turn selects a network lab, Naome starts the local lab in a detached process. If the selected lab belongs to a dedicated local network created by `create_project`, the same worker also starts its matching orchestrator. A stopped node will be started again on the next matching turn while the option is enabled.
@@ -69,6 +95,7 @@ Offline projects continue to use the local archive on their own. The hook does n
 - Codex uses the local MCP tools to record questions, hypotheses, methods, observations, results, limitations, and linked corrections. The plugin packages research instructions that require evidence for findings. Hook coverage and agent participation determine which activities are recorded.
 - Each captured record is deposited with `naome archive put` as soon as possible. The local journal retains records if the archive CLI cannot acknowledge them. The MCP status reports archived record IDs and counts pending local writes and report submissions for both the selected lab and the whole chat.
 - In Codex clients with inline MCP Apps support, `record_research` shows a card after the local archive confirms the write. **Show details** expands the full summary, sources, linked records, and record ID. The tool also returns its existing text receipt, including when a write is queued.
+- Follow the current user and workspace instructions for recording and submitting evidence. Set `delivery` to `local` for an authorized local-only entry. This keeps it out of assignment reports even when a job is active. The default `assigned` behavior can submit to the configured orchestrator. If host approval is denied, continue the permitted work and retry the write only after new authorization.
 - A uniquely ready assignment enables optional reporting for subsequent records. An ambiguous assignment leaves capture local. Previously unassigned records stay in the lab archive. The bridge sends assigned records through ordered `naome research stream` segments and retries the exact segments after an ambiguous acknowledgment. The lab node handles replication to the orchestrator.
 - Use approved material for the pilot. Version 0.2.0 gives inline lab stream records the REP public descriptor. A correction entry documents a revised finding and links its original record. REP policy and admitted notices govern formal reassessment.
 
@@ -82,9 +109,12 @@ Run the tests with the pinned `naome` release in `~/.cargo/bin/naome`, or set `N
 
 ```sh
 python3 tests/integration.py
+python3 tests/archive_search.py
 python3 tests/turn_routing.py
 python3 tests/project_setup.py
 python3 tests/autostart.py
 ```
 
 The tests use isolated node and workspace directories. They cover local capture without a running node or assignment, two project scopes, lost report acknowledgments, and readback from real orchestrators. The turn-routing test connects two labs to separate orchestrators and verifies one chat across both, including archive and report delays, late hook events, an ambiguous selection, and a pending entry from an older journal. The project setup test creates both project modes through the MCP tool and checks offline archive writes, a real assignment and replication, and safe retries. The autostart test keeps both nodes stopped while writing and reading a record, then verifies that they start and connect without starting a second pair.
+
+The search integration test exercises snapshot approval and revocation, project-scoped link lookups, and native worker reuse with stopped labs. Set `NAOME_TEST_SEARCH_MODEL` and optionally `NAOME_TEST_SEARCH_PYTHON` to include real semantic and hybrid queries.

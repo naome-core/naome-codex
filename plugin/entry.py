@@ -3,10 +3,12 @@
 
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
 
+from archive_search import MAX_HITS, MODES, QUERY_LIMIT, SearchSession, search_research
 from autostart import schedule
 from bridge import Bridge, DeliveryError, ID, KINDS, digest, encode
 from project import PROJECT, create_project
@@ -16,6 +18,7 @@ ERRORS = (DeliveryError, OSError, ValueError, KeyError, TypeError, sqlite3.Error
 INPUT_LIMIT = 8 * 1024 * 1024
 TOKEN = {"type": "string", "description": "The local lab token supplied by the current turn's Naome hook."}
 TOKENS = {"binding_token": TOKEN}
+READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
 
 
 def tool(name, description, properties, required, **metadata):
@@ -40,8 +43,21 @@ TOOLS = [
              "mode": {"type": "string", "enum": ["local", "network"], "default": "local"},
          }, ["project"]),
     tool("research_status", "Show pending work for the selected lab and across this chat, and the current assignment.",
-         TOKENS, ["binding_token"]),
-    tool("record_research", "Record a structured research step using evidence this turn actually observed.",
+         TOKENS, ["binding_token"], annotations=READ_ONLY),
+    tool("search_research", "Search the current project's approved snapshot in the selected local lab. "
+         "Uses the native archive search and may prepare its local derived index. Returns scoped records, "
+         "verified links, the searched snapshot and search coverage. An exact record ID needs no model.",
+         {
+             **TOKENS,
+             "query": {"type": "string", "maxLength": QUERY_LIMIT,
+                       "description": "A question, keywords, or a complete record ID."},
+             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_HITS, "default": 5},
+             "mode": {"type": "string", "enum": list(MODES), "default": "auto"},
+         }, ["binding_token", "query"], annotations=READ_ONLY),
+    tool("record_research", "Append a structured research record to the selected local lab using evidence "
+         "observed in this turn. With delivery=local it stays in the lab and is not queued for submission. "
+         "With delivery=assigned (the default), an active assignment can also send a report to its configured "
+         "orchestrator. Use the destination authorized by the user and workspace.",
          {
              **TOKENS,
              "category": {"type": "string", "enum": list(KINDS)},
@@ -53,8 +69,11 @@ TOOLS = [
                  "description": "Evidence references such as URLs, a pinned revision and path, or an observed tool event.",
              },
              "linked_records": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+             "delivery": {"type": "string", "enum": ["local", "assigned"], "default": "assigned",
+                          "description": "Choose local archival only or allow submission to the active assignment."},
          },
-         ["binding_token", "category", "title", "summary", "sources"], _meta=TOOL_META),
+         ["binding_token", "category", "title", "summary", "sources"], _meta=TOOL_META,
+         annotations={"readOnlyHint": False, "openWorldHint": True}),
     tool("retry_research_delivery", "Retry local capture and delivery of any assigned research reports.",
          TOKENS, ["binding_token"]),
 ]
@@ -64,7 +83,7 @@ def tool_result(receipt):
     return {"content": [{"type": "text", "text": encode(receipt)}], "isError": False}
 
 
-def do_tool(name, arguments):
+def do_tool(name, arguments, search):
     if not isinstance(arguments, dict):
         raise ValueError("Tool arguments must be an object.")
     bridge = Bridge()
@@ -76,6 +95,8 @@ def do_tool(name, arguments):
     if name == "research_status":
         return tool_result({"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
                             **bridge.status(binding, include_chat=True)})
+    if name == "search_research":
+        return tool_result(search_research(bridge, binding, arguments, search))
     if name == "retry_research_delivery":
         return tool_result(bridge.flush(binding))
     if name != "record_research":
@@ -96,11 +117,19 @@ def do_tool(name, arguments):
         raise ValueError("Observations, results, and corrections need evidence references.")
     if category == "correction" and not supplied:
         raise ValueError("A correction must link to the original archived record.")
+    delivery = arguments.get("delivery", "assigned")
+    if delivery not in ("local", "assigned"):
+        raise ValueError("Invalid research delivery mode.")
     references = sorted(set(supplied))
     title = title.strip()
     fields = {"summary": summary.strip(), "sources": sources, "recorded_by": "Codex MCP",
               "codex_turn": binding["turn"]}
-    event = "research:" + digest([category, title, fields, references])
+    identity = [category, title, fields, references]
+    if delivery == "local" and binding["job"]:
+        # Keep the local record distinct from a previously queued assigned write of the same content.
+        identity.append("local")
+        binding = {**binding, "job": None}
+    event = "research:" + digest(identity)
     offset = bridge.enqueue(binding, event, category, title, fields, references)
     local = bridge.archive(binding, offset)
     delivered = bridge.flush(binding) if binding["job"] else {}
@@ -118,8 +147,12 @@ def context_output(binding, progress):
     context = (
         f"Naome selected lab {binding['lab_name']} for this turn. {association} "
         "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill. "
-        "Before substantive analysis or experiments, use record_research for separate question and method entries, "
-        "and for any relevant hypothesis. Afterward record supported results and material limitations with evidence. "
+        "Follow the user and workspace instructions for permission to record and send evidence. "
+        "A lab selection and binding token identify a destination and do not grant recording permission. "
+        "When recording is authorized, before substantive analysis or experiments, use record_research for separate "
+        "question and method entries, and for any relevant hypothesis. Record supported results and material limitations. "
+        "Use delivery=local unless assignment delivery is authorized. "
+        "If recording is restricted or an approval is denied, continue the allowed work without retrying the write. "
         "Check the write result and report unresolved archive failures. "
         "For routine edits, maintenance and status checks, rely on automatic hook capture unless the user asks for a research record. "
         f"Use binding_token {binding['token']} only for this turn. "
@@ -206,7 +239,7 @@ def hook(payload):
     return {}
 
 
-def dispatch(request):
+def dispatch(request, search):
     method = request["method"]
     details = request.get("params", {})
     if not isinstance(details, dict):
@@ -228,7 +261,7 @@ def dispatch(request):
         return {}
     if method == "tools/call":
         try:
-            return do_tool(details["name"], details.get("arguments", {}))
+            return do_tool(details["name"], details.get("arguments", {}), search)
         except ERRORS as error:
             message = str(error) if isinstance(error, (ValueError, DeliveryError)) else (
                 "The local NAOME research bridge could not process the request."
@@ -237,7 +270,7 @@ def dispatch(request):
     return None
 
 
-def mcp():
+def mcp(search):
     for line in sys.stdin.buffer:
         request_id = None
         try:
@@ -251,7 +284,7 @@ def mcp():
             if "id" not in request:
                 continue
             request_id = request["id"]
-            result = dispatch(request)
+            result = dispatch(request, search)
             body = {"result": result} if result is not None else {
                 "error": {"code": -32601, "message": "Method not found"}
             }
@@ -269,7 +302,9 @@ if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in {"mcp", "hook"}:
         sys.exit("Usage: entry.py [mcp|hook]")
     if sys.argv[1] == "mcp":
-        mcp()
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        with SearchSession() as search:
+            mcp(search)
     else:
         try:
             data = sys.stdin.buffer.read(INPUT_LIMIT + 1)
