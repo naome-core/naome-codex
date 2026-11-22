@@ -26,7 +26,7 @@ def configured_labs(project):
         raise ValueError("Configure each lab directory only once in a project.")
     default = project.get("default_lab")
     if default is not None and (not isinstance(default, str) or default.casefold() not in resolved):
-        raise ValueError("The project's default must name a configured NAOME lab.")
+        raise ValueError("default_lab must name a configured NAOME lab.")
     return resolved, default.casefold() if default else next(iter(resolved)) if len(resolved) == 1 else None
 
 

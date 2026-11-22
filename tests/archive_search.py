@@ -60,6 +60,15 @@ def main():
             "os.execv(binary, [binary, *sys.argv[1:]])\n"
         )
         wrapper.chmod(0o700)
+        old_cli = root / "old-native.py"
+        old_cli.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            "if 'search-session' in sys.argv:\n"
+            "    sys.exit(\"error: unrecognized subcommand 'search-session'\")\n"
+            f"os.execv({str(NAOME)!r}, [{str(NAOME)!r}, *sys.argv[1:]])\n"
+        )
+        old_cli.chmod(0o700)
         settings = {"naome": str(wrapper), "projects": {"calibration": {"workspace": str(workspace),
                     "default_lab": "A", "labs": {"A": {"directory": str(lab_a), "search_head": head_a},
                                                    "B": {"directory": str(lab_b)}}}}}
@@ -98,7 +107,7 @@ def main():
                 reply = call(token, query, **extra)
                 assert not reply["isError"], reply
                 report = json.loads(reply["content"][0]["text"])
-                if report["hits"]:
+                if report["hits"] or report.get("coverage") in {"index_incomplete", "limited"}:
                     assert reply["structuredContent"] == report and "_meta" not in reply
                 else:
                     assert "structuredContent" not in reply
@@ -106,6 +115,15 @@ def main():
 
             try:
                 token = bind("a", "Find previous calibration work.")
+                settings["naome"] = str(old_cli)
+                configure()
+                outdated = call(token, approved)
+                message = outdated["content"][0]["text"]
+                assert outdated["isError"] and all(part in message for part in (
+                    str(old_cli), "archive search-session", "v0.4.0",
+                )), message
+                settings["naome"] = str(wrapper)
+                configure()
                 assert call(token, "detector", head=newer_head)["isError"]
                 assert call(token, "detector", mode="semantic")["isError"]
                 assert not launches.exists()
@@ -157,6 +175,15 @@ def main():
                 next_token = bind("b", "/lab B\nLook up the thermal run.")
                 assert call(token, approved)["isError"]
                 assert result(next_token, approved)["lab"] == "A"
+
+                for index in range(33):
+                    put(lab_b, "calibration", f"Cold index record {index}", "Additional calibration evidence.")
+                lab_settings["search_head"] = cli(lab_b, "archive", "snapshot", "Fresh search inventory")
+                configure()
+                partial = result(next_token, "nonexistentkeyword", lab="B")
+                assert partial["hits"] == [] and partial["coverage"] == "index_incomplete", partial
+                complete = result(next_token, "oscillator", lab="B")
+                assert complete["coverage"] == "complete" and complete["hits"][0]["record_id"] == only_b, complete
                 assert all(not cli(lab, "status")["running"] for lab in (lab_a, lab_b))
             finally:
                 server.stdin.close()

@@ -77,19 +77,20 @@ class Bridge:
             return None
         location = Path(cwd).resolve()
         candidate = git_common_dir(location)
-        matched = []
-        for name, project in self.projects.items():
-            root = Path(project["workspace"])
-            if not root.is_absolute():
-                raise ValueError("Workspace paths must be absolute.")
-            root = root.resolve()
-            owner = git_common_dir(root)
-            # A nested Git repository is a different workspace.
-            if (owner is None and (root == location or root in location.parents)) or (
-                owner is not None and owner == candidate
-            ):
-                matched.append(name)
+        matched = [name for name, project in self.projects.items() if self.owns_workspace(project, location, candidate)]
         return matched[0] if len(matched) == 1 else None
+
+    @staticmethod
+    def owns_workspace(project, location, candidate):
+        root = Path(project["workspace"])
+        if not root.is_absolute():
+            raise ValueError("Workspace paths must be absolute.")
+        root = root.resolve()
+        if root == location:
+            return True
+        owner = git_common_dir(root)
+        # A nested Git repository is a different workspace.
+        return owner == candidate if owner is not None else root in location.parents
 
     @contextmanager
     def open(self):
@@ -138,9 +139,10 @@ class Bridge:
         return lines if args[:2] == ("research", "stream") else (lines[0] if lines else None)
 
     def configured_lab(self, binding):
-        project = self.projects.get(binding["project"])
-        if project is not None:
-            return next((lab for lab in configured_labs(project)[0].values() if lab["path"] == binding["lab"]), None)
+        scope = binding["project"]
+        if scope in self.projects:
+            labs, _ = self.project_labs(scope)
+            return next((lab for lab in labs.values() if lab["path"] == binding["lab"]), None)
 
     def lab_allowed(self, binding):
         return self.configured_lab(binding) is not None
@@ -156,12 +158,15 @@ class Bridge:
             f"WHERE t.token IS NOT NULL AND {where}", parameters,
         ).fetchone()
 
-    def turn_binding(self, project, session, turn, active=False):
+    def turn_binding(self, cwd, session, turn):
+        if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not self.projects or not self.state.is_file():
+            return None
         with self.open() as db:
-            row = self.route(db, "c.project=? AND t.session=? AND t.turn=? AND (NOT ? OR c.active_turn=t.turn)",
-                             (project, session, turn, active))
-        binding = self.resolve_binding(row)
-        return binding if binding and binding["lab"] else None
+            row = self.route(db, "t.session=? AND t.turn=?", (session, turn))
+        if row and row["lab"] and row["workspace_project"] in self.projects:
+            location = Path(cwd).resolve()
+            if self.owns_workspace(self.projects[row["workspace_project"]], location, git_common_dir(location)):
+                return self.resolve_binding(row)
 
     def authorized(self, token):
         if not isinstance(token, str) or not self.projects:
@@ -175,9 +180,22 @@ class Bridge:
             if row["lab"] is None or self.lab_allowed(row):
                 return {**dict(row), "project_name": self.project_names[row["project"]]}
 
+    def project_labs(self, scope):
+        try:
+            return configured_labs(self.projects[scope])
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError) as error:
+            raise ValueError(f"Invalid lab configuration for Naome project {self.project_names[scope]}: {error}") from error
+
     def project_catalog(self):
-        return {self.project_names[scope]: [lab["name"] for lab in configured_labs(project)[0].values()]
-                for scope, project in self.projects.items()}
+        catalog = {}
+        for scope, name in self.project_names.items():
+            try:
+                labs, _ = self.project_labs(scope)
+            except ValueError:
+                catalog[name] = []
+            else:
+                catalog[name] = [lab["name"] for lab in labs.values()]
+        return catalog
 
     def read_destination(self, binding, arguments):
         project = binding["project"]
@@ -186,7 +204,7 @@ class Bridge:
             if not isinstance(name, str) or name.casefold() not in self.project_scopes:
                 raise ValueError("The specified project is not enrolled.")
             project = self.project_scopes[name.casefold()]
-        labs, default = configured_labs(self.projects[project])
+        labs, default = self.project_labs(project)
         if "lab" in arguments:
             lab = named_lab(labs, arguments["lab"])
         elif project == binding["project"] and binding["lab"]:
@@ -211,7 +229,12 @@ class Bridge:
                 return None, issue
             row = db.execute("SELECT * FROM turn_route WHERE session=? AND turn=?", (session, turn)).fetchone()
             if not row:
-                labs, default = configured_labs(self.projects[project])
+                try:
+                    labs, default = self.project_labs(project)
+                except ValueError as error:
+                    issue = str(error)
+                    self.note_turn(db, session, turn, issue=issue)
+                    return None, issue
                 lab = next((lab for lab in labs.values() if lab["path"] == chat["default_lab"]), labs.get(default))
                 dest = self.register_destination(db, session, project, lab) if lab else None
                 self.note_turn(db, session, turn, dest, lab["name"] if lab else None)
@@ -242,7 +265,7 @@ class Bridge:
 
     def select_lab(self, binding, name, remember):
         project, session, turn = binding["project"], binding["codex_session"], binding["turn"]
-        lab = named_lab(configured_labs(self.projects[project])[0], name)
+        lab = named_lab(self.project_labs(project)[0], name)
         jobs = self.available_jobs(lab["path"])
         with self.open() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -390,11 +413,13 @@ class Bridge:
                 "count(CASE WHEN job IS NOT NULL AND head IS NULL THEN 1 END) "
                 "FROM entry WHERE session=?", (session,),
             ).fetchone()
-            record = db.execute(
-                "SELECT record FROM entry WHERE session=? AND record IS NOT NULL "
-                "AND (? IS NULL OR offset=?) ORDER BY offset DESC LIMIT 1",
-                (session, offset, offset),
-            ).fetchone()
+            if offset is None:
+                record = db.execute(
+                    "SELECT record FROM entry WHERE session=? AND record IS NOT NULL ORDER BY offset DESC LIMIT 1",
+                    (session,),
+                ).fetchone()
+            else:
+                record = db.execute("SELECT record FROM entry WHERE session=? AND offset=?", (session, offset)).fetchone()
             progress = {"pending_local": local, "pending_reports": reports,
                         "local_record": record[0] if record else None}
             if include_chat:
@@ -416,30 +441,46 @@ class Bridge:
         receipts = []
         for row in rows:
             document = json.loads(row["document"])
+            fields = document["fields"]
             receipts.append({
                 "record_id": row["record"], "title": document["subject"],
-                "category": document["fields"]["category"],
+                "category": fields["category"],
                 "captured_at": row["captured_at"].replace(" ", "T") + "Z",
-                "summary": document["fields"].get("summary"),
+                "summary": fields.get("summary"), "sources": fields.get("sources", []),
+                "linked_records": [link["target"] for link in document.get("inputs", [])
+                                   if link["role"] == "references"],
             })
         return receipts
 
     def archive(self, binding, offset=None, budget=2):
-        """Deposit evidence locally even when there is no assigned job."""
+        """Deposit queued evidence and return the receipt when a specific offset was requested."""
         session = binding["session"]
         with self.open() as db:
-            rows = db.execute(
-                "SELECT * FROM entry WHERE session=? AND record IS NULL "
-                "AND (? IS NULL OR offset=?) ORDER BY offset LIMIT 16",
-                (session, offset, offset),
-            ).fetchall()
+            if offset is None:
+                rows = db.execute(
+                    "SELECT * FROM entry WHERE session=? AND record IS NULL ORDER BY offset LIMIT 16",
+                    (session,),
+                ).fetchall()
+            else:
+                row = db.execute("SELECT * FROM entry WHERE session=? AND offset=?", (session, offset)).fetchone()
+                if not row or row["record"] is not None:
+                    return {"local_record": row["record"] if row else None}
+                rows = (row,)
+        result = self.archive_rows(binding["lab"], rows, budget)
+        if offset is not None:
+            with self.open() as db:
+                row = db.execute("SELECT record FROM entry WHERE session=? AND offset=?", (session, offset)).fetchone()
+            result["local_record"] = row["record"] if row else None
+        return result
+
+    def archive_rows(self, lab, rows, budget):
         deadline = time.monotonic() + budget
         retry = {}
         if rows:
             try:
-                self.require_lab(binding["lab"])
+                self.require_lab(lab)
             except DeliveryError as error:
-                return {**self.status(binding, offset), "local_retry": str(error)}
+                return {"local_retry": str(error)}
         for row in rows:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -449,7 +490,7 @@ class Bridge:
                 evidence.write(encode(self.document(row)))
                 evidence.flush()
                 try:
-                    record = self.call(binding["lab"], "archive", "put", evidence.name,
+                    record = self.call(lab, "archive", "put", evidence.name,
                                        timeout=min(1.5, remaining))
                     if not isinstance(record, str) or not ID.fullmatch(record):
                         raise DeliveryError("NAOME did not acknowledge the local record.")
@@ -458,8 +499,8 @@ class Bridge:
                     continue
             with self.open() as db:
                 db.execute("UPDATE entry SET record=? WHERE session=? AND offset=?",
-                           (record, session, row["offset"]))
-        return {**self.status(binding, offset), **retry}
+                           (record, row["session"], row["offset"]))
+        return retry
 
     @staticmethod
     def pending_destinations(db, binding):

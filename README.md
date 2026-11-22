@@ -40,7 +40,7 @@ The tool needs a working `naome` binary and no lab token. It preserves existing 
 
 ## Switch projects or labs in one chat
 
-Ask Codex which project or lab to read. For example, after looking up the latest record, ask “And in Naome Network?” Codex maps the request to the enrolled names supplied by the hook and passes them as `project` and `lab` arguments to `list_recent_research` or `search_research`. The plugin validates those arguments against its configuration. These arguments apply to that read. Evidence is recorded and submitted from the workspace where its project is enrolled.
+Ask Codex which project or lab to read. For example, after looking up the latest record, ask “And in Naome Network?” Codex maps the request to the enrolled names supplied by the hook and passes them as `project` and `lab` arguments to the read tool. The plugin validates the selected project's labs for that read. Evidence is recorded and submitted from the workspace where its project is enrolled.
 
 ### Multiple labs in a project
 
@@ -64,6 +64,8 @@ The hook starts the turn with the workspace project and any configured or rememb
 ## List recent research records
 
 Use `list_recent_research` to see the latest confirmed Naome Codex research receipts for the specified project and lab, including records from other chats in that project. It returns titles, categories, capture times, record IDs and short previews of the stored summaries. The cards also show the full stored summary on request. This read works offline without a search snapshot or embedding model and skips automatic hook events and pending writes. Use an approved lab snapshot to search records from other sources.
+
+Use `lookup_research` for reads during analysis. It returns text with recent records and their stored details when no query is supplied, or searches the approved snapshot when a query is supplied.
 
 ## Search an approved lab snapshot
 
@@ -91,6 +93,8 @@ Approve an inventory whose records and dependencies may be indexed locally for t
 
 The Python field is optional and defaults to `python3`. Set up the checkpoint and inference environment using the [Network release guide](https://github.com/naome-core/naome-network/releases/tag/v0.4.0). With a model configured, natural-language searches default to hybrid ranking. Semantic and hybrid ranking use the existing local checkpoint. The native worker can update its derived search index during a query.
 
+The search requires a CLI that supports `archive search-session`. NAOME Network v0.4.0 is the tested release. When the index is incomplete, the search reports that additional matches can become available, including when the current result is empty.
+
 ## Start a network when a Codex turn begins
 
 Set `"auto_start": true` on a project entry in the local Naome configuration to opt in. When a turn selects a network lab, Naome starts the local lab in a detached process. If the selected lab belongs to a dedicated local network created by `create_project`, the same worker also starts its matching orchestrator. A stopped node will be started again on the next matching turn while the option is enabled.
@@ -102,7 +106,7 @@ Offline projects continue to use the local archive on their own. The hook does n
 - The recorder stores tool completion metadata and turn interruptions or stops. A tool receipt includes its observed identities, content digests, and available machine status. Full prompts, raw tool bodies, and transcripts stay outside this automatic capture.
 - Codex uses the local MCP tools to record questions, hypotheses, methods, observations, results, limitations, and linked corrections. The plugin packages research instructions that require evidence for findings. Hook coverage and agent participation determine which activities are recorded.
 - Each captured record is deposited with `naome archive put` as soon as possible. The local journal retains records if the archive CLI cannot acknowledge them. The MCP status reports archived record IDs and counts pending local writes and report submissions for both the selected lab and the whole chat.
-- Codex clients with inline MCP Apps support show a research card for a confirmed write, one or more recent receipts, and hits from an approved search snapshot. Select **more** to see the record ID and the details supplied by that operation. For writes these include the summary, sources, and linked records. Search hits show the approved snapshot and available excerpts and verified links. Recent receipts show the capture time and preserve the same scope without a snapshot. The tools also return text results for clients without cards.
+- Codex clients with inline MCP Apps support show a detailed card for a single record and a compact list for multiple records. Each list shows up to three rows initially. Expand the list to see all rows, and select **more** on a record to see its ID and available details. `record_research` shows a confirmed write as a card when requested. `capture_research` returns a text receipt during research, including pending statuses. The same record can be retried through either tool.
 - Follow the current user and workspace instructions for recording and submitting evidence. Set `delivery` to `local` for an authorized local-only entry. This keeps it out of assignment reports even when a job is active. The default `assigned` behavior can submit to the configured orchestrator. If host approval is denied, continue the permitted work and retry the write only after new authorization.
 - A uniquely ready assignment enables optional reporting for subsequent records. An ambiguous assignment leaves capture local. Previously unassigned records stay in the lab archive. The bridge sends assigned records through ordered `naome research stream` segments and retries the exact segments after an ambiguous acknowledgment. The lab node handles replication to the orchestrator.
 - Use approved material for the pilot. Version 0.2.0 gives inline lab stream records the REP public descriptor. A correction entry documents a revised finding and links its original record. REP policy and admitted notices govern formal reassessment.

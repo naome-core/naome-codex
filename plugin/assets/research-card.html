@@ -7,12 +7,19 @@
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; }
+  [hidden] { display: none !important; }
   __NAOME_CARD_STYLES__
 </style>
 </head>
 <body>
 <section id="results" aria-label="Naome research records" hidden>
+  <header id="collection-header" class="naome-card-header" hidden>
+    <img class="naome-card-logo" src="__NAOME_CARD_LOGO__" alt="" width="18" height="18">
+    <p id="collection-scope"></p>
+  </header>
   <div id="records" class="naome-record-list"></div>
+  <button id="collection-toggle" class="naome-card-toggle" type="button"
+          aria-controls="records" aria-expanded="false" hidden></button>
   <p id="notice" class="naome-search-notice" hidden></p>
 </section>
 <template id="record-template">
@@ -38,13 +45,20 @@
     const results = document.getElementById('results');
     const records = document.getElementById('records');
     const notice = document.getElementById('notice');
+    const collectionHeader = document.getElementById('collection-header');
+    const collectionScope = document.getElementById('collection-scope');
+    const collectionToggle = document.getElementById('collection-toggle');
     const template = document.getElementById('record-template');
+    const visibleRows = 3;
     const translations = {
       en: {
         title: 'Naome research records', details: 'Research record details', record: 'Research record',
         show: 'more', hide: 'less', limited: 'Search coverage is limited.',
+        indexing: 'The search index is still being built. More results may become available.',
+        showAll: count => 'Show all ' + count, showFewer: 'Show fewer',
         fields: { summary: 'Summary', excerpt: 'Search excerpt', sources: 'Sources', links: 'Linked records',
-          recordId: 'Record ID', lab: 'Lab', snapshot: 'Search snapshot', location: 'Match location' },
+          recordId: 'Record ID', lab: 'Lab', snapshot: 'Search snapshot', location: 'Match location',
+          capturedAt: 'Captured' },
         categories: { question: 'Question', hypothesis: 'Hypothesis', method: 'Method',
           observation: 'Observation', result: 'Result', limitation: 'Limitation', correction: 'Correction',
           claim: 'Claim', plan: 'Plan', occurrence: 'Occurrence', derivation: 'Derivation' }
@@ -52,8 +66,11 @@
       de: {
         title: 'Naome-Forschungseinträge', details: 'Details zum Forschungseintrag', record: 'Forschungseintrag',
         show: 'mehr', hide: 'weniger', limited: 'Die Suche deckt nur einen Teil der Daten ab.',
+        indexing: 'Der Suchindex wird noch aufgebaut. Weitere Treffer können hinzukommen.',
+        showAll: count => 'Alle ' + count + ' anzeigen', showFewer: 'Weniger anzeigen',
         fields: { summary: 'Zusammenfassung', excerpt: 'Suchauszug', sources: 'Quellen', links: 'Verknüpfte Einträge',
-          recordId: 'Eintrags-ID', lab: 'Labor', snapshot: 'Such-Snapshot', location: 'Fundstelle' },
+          recordId: 'Eintrags-ID', lab: 'Labor', snapshot: 'Such-Snapshot', location: 'Fundstelle',
+          capturedAt: 'Erfasst' },
         categories: { question: 'Frage', hypothesis: 'Hypothese', method: 'Methode',
           observation: 'Beobachtung', result: 'Ergebnis', limitation: 'Einschränkung', correction: 'Korrektur',
           claim: 'Behauptung', plan: 'Plan', occurrence: 'Ereignis', derivation: 'Ableitung' }
@@ -63,6 +80,8 @@
     const dateOptions = { dateStyle: 'medium', timeStyle: 'short' };
     let dateFormatter = new Intl.DateTimeFormat('en', dateOptions);
     let cards = [];
+    let showAll = false;
+    let coverage;
     let ready = false;
     let lastHeight;
     const send = (message) => window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
@@ -81,12 +100,17 @@
       const data = result?.structuredContent;
       if (result?.isError || typeof data?.lab !== 'string') return [];
       if (data.source === 'codex_archive_receipts' && Array.isArray(data.records)) {
-        const summaries = result?._meta?.['naome/research-summaries'];
+        const details = result?._meta?.['naome/research-details'];
+        const legacySummaries = result?._meta?.['naome/research-summaries'];
         return data.records.filter(record => isId(record?.record_id) && typeof record.title === 'string')
-          .map(record => ({ recordId: record.record_id, title: record.title, category: record.category,
-            project: data.project, lab: data.lab, capturedAt: record.captured_at,
-            preview: typeof record.preview === 'string' ? record.preview : '',
-            fields: { summary: summaries?.[record.record_id] ?? record.preview } }));
+          .map(record => {
+            const detail = details?.[record.record_id];
+            return { recordId: record.record_id, title: record.title, category: record.category,
+              project: data.project, lab: data.lab, capturedAt: record.captured_at,
+              preview: typeof record.preview === 'string' ? record.preview : '',
+              fields: { summary: detail?.summary ?? legacySummaries?.[record.record_id] ?? record.preview,
+                sources: detail?.sources, links: detail?.linked_records } };
+          });
       }
       if (isId(data.head) && Array.isArray(data.hits)) {
         return data.hits.filter(hit => isId(hit?.record_id)).map(hit => {
@@ -131,7 +155,7 @@
       return row;
     }
 
-    function updateCard({ entry, heading, context, toggle, details }) {
+    function updateCard({ entry, compact, heading, context, toggle, details }) {
       heading.textContent = typeof entry.title === 'string' && entry.title ? entry.title : labels.record;
       const category = typeof entry.category === 'string' && Object.hasOwn(labels.categories, entry.category)
         ? labels.categories[entry.category] : '';
@@ -139,17 +163,18 @@
       const timestamp = date && Number.isFinite(date.getTime()) ? dateFormatter.format(date) : '';
       const defaultLab = entry.lab === 'default';
       const project = typeof entry.project === 'string' ? entry.project : '';
-      context.textContent = [category, project, defaultLab ? '' : 'Lab ' + entry.lab, timestamp]
+      context.textContent = compact ? category : [category, project, defaultLab ? '' : 'Lab ' + entry.lab, timestamp]
         .filter(Boolean).join(' · ');
       details.setAttribute('aria-label', labels.details);
       toggle.textContent = details.hidden ? labels.show : labels.hide;
       if (!details.hidden) {
-        const fields = { ...entry.fields, lab: defaultLab ? entry.lab : null, recordId: entry.recordId };
+        const fields = { ...entry.fields, capturedAt: compact ? timestamp : null,
+          lab: !compact && defaultLab ? entry.lab : null, recordId: entry.recordId };
         details.replaceChildren(...Object.entries(fields).map(([name, value]) => field(name, value)).filter(Boolean));
       }
     }
 
-    function makeCard(entry, index) {
+    function makeCard(entry, index, compact) {
       const element = template.content.firstElementChild.cloneNode(true);
       const heading = element.querySelector('h2');
       const context = element.querySelector('.naome-card-context');
@@ -161,11 +186,11 @@
       element.setAttribute('aria-labelledby', heading.id);
       toggle.setAttribute('aria-controls', details.id);
       preview.textContent = entry.preview ?? '';
-      preview.hidden = !entry.preview;
-      const card = { entry, element, heading, context, toggle, details };
+      preview.hidden = compact || !entry.preview;
+      const card = { entry, compact, element, heading, context, toggle, details };
       toggle.addEventListener('click', () => {
         details.hidden = !details.hidden;
-        preview.hidden = !entry.preview || !details.hidden;
+        preview.hidden = compact || !entry.preview || !details.hidden;
         toggle.setAttribute('aria-expanded', String(!details.hidden));
         if (details.hidden) details.replaceChildren();
         updateCard(card);
@@ -192,8 +217,9 @@
         document.documentElement.lang = language;
         document.title = labels.title;
         results.setAttribute('aria-label', labels.title);
-        notice.textContent = labels.limited;
+        updateNotice();
         cards.forEach(updateCard);
+        updateCollection();
       }
       if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
       if (styles !== undefined) {
@@ -206,14 +232,46 @@
       }
     }
 
+    function updateNotice() {
+      notice.textContent = coverage === 'index_incomplete' ? labels.indexing : labels.limited;
+      notice.hidden = coverage !== 'index_incomplete' && coverage !== 'limited';
+    }
+
+    function updateCollection() {
+      const grouped = cards.length > 1;
+      results.classList.toggle('naome-card', grouped);
+      results.classList.toggle('naome-collection', grouped);
+      collectionHeader.hidden = !grouped;
+      collectionToggle.hidden = cards.length <= visibleRows;
+      collectionToggle.setAttribute('aria-expanded', String(showAll));
+      collectionToggle.textContent = showAll ? labels.showFewer : labels.showAll(cards.length);
+      if (grouped) {
+        const { project, lab } = cards[0].entry;
+        collectionScope.textContent = [project, labels.fields.lab + ' ' + lab].filter(Boolean).join(' · ');
+      }
+      cards.forEach(({ element }, index) => { element.hidden = !showAll && index >= visibleRows; });
+    }
+
+    collectionToggle.addEventListener('click', () => {
+      showAll = !showAll;
+      updateCollection();
+      reportSize();
+    });
+
     function showResult(result) {
-      cards = recordEntries(result).map(makeCard);
+      const entries = recordEntries(result);
+      showAll = false;
+      cards = entries.map((entry, index) => makeCard(entry, index, entries.length > 1));
       records.replaceChildren(...cards.map(card => card.element));
-      const data = result?.structuredContent;
-      notice.textContent = labels.limited;
-      notice.hidden = !Array.isArray(data?.hits) ||
-        ![data.limited_coverage, data.vector_budget_exhausted, data.query_limited].includes(true);
-      results.hidden = cards.length === 0;
+      updateCollection();
+      const data = result?.isError ? undefined : result?.structuredContent;
+      coverage = Array.isArray(data?.hits) ? data.coverage : undefined;
+      if (cards.length && Array.isArray(data?.hits) && coverage === undefined &&
+          [data.limited_coverage, data.vector_budget_exhausted, data.query_limited].includes(true)) {
+        coverage = 'limited';
+      }
+      updateNotice();
+      results.hidden = cards.length === 0 && notice.hidden;
       reportSize();
     }
 

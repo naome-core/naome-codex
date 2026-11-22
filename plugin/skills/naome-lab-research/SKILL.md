@@ -15,18 +15,18 @@ The lab binding identifies the destination. Follow the user's request and worksp
 
 ## Find prior lab evidence
 
-Use `list_recent_research` when asked what was recorded most recently. Request one record for the latest entry. If the user refers to another project or lab, interpret the request using the enrolled names from the hook and pass the intended `project` and `lab` as tool arguments. The same arguments apply to `search_research`. They affect only the requested read. If several enrolled names fit the request and the context cannot resolve it, ask which one to read.
+Use `list_recent_research` when the user asks to see recent entries and `search_research` when they ask to see snapshot matches. Request one record for the latest entry. If the user refers to another project or lab, use the enrolled names from the hook as the `project` and `lab` arguments. They affect only the requested read. If several enrolled names fit the request and the context cannot resolve it, ask which one to read.
 
-`list_recent_research` lists receipts for explicit Naome Codex research records confirmed by that lab across chats in the project. It returns the title, category, capture time, record ID and a short preview of the stored summary without a search snapshot. The full stored summary is available in the card details. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
+`list_recent_research` lists confirmed Codex research receipts across chats in the project without a search snapshot. Expand an entry to see its stored summary and available sources or linked records. An empty list means there are no matching Codex receipts. This lookup requires no new research entry.
 
-When the task depends on previous findings, use `search_research` to query the selected lab's approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
+Use `lookup_research` for reads during analysis. Omit `query` to read recent Codex records with their stored details. Supply `query` to search the approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
 
-Use a displayed research card as the answer when the user only asks to see records. Add requested analysis or a material caveat the card does not convey. On clients without cards, use the text results, including the snapshot and any material coverage limits. Explain empty results and errors briefly.
+Use a displayed research card as the answer when the user only asks to see records. For analysis, present the relevant findings with sources. Include the snapshot and any material coverage limits when reporting search results. If an incomplete index returns no hits, mention that more results may become available.
 
 ## Record material research milestones
 
-- At the start of substantive research, record the question and planned method in separate entries. Record a hypothesis when applicable. For an experiment, capture the inputs, comparison, and the observation that would change the conclusion before running it.
-- Use `record_research` when an observation, method change, finding, or limitation affects the research. The hooks already capture supported tool and turn events. Cite their receipt IDs, pinned revisions and file paths, observed URLs, or supplied record IDs as evidence for a new research entry.
+- At the start of authorized substantive research, use `capture_research` for separate question and method entries. Record a hypothesis when applicable. For an experiment, capture the inputs, comparison, and the observation that would change the conclusion before running it.
+- Use `capture_research` when an observation, method change, finding, or limitation affects the research. Use `record_research` when the user asks to see the confirmed entry as a card. The hooks already capture supported tool and turn events. Cite their receipt IDs, pinned revisions and file paths, observed URLs, or supplied record IDs as evidence for a new research entry. Report errors and pending storage.
 - Describe what was directly observed and what you infer from it. State the tested scope and identify missing evidence that limits the conclusion. Use `correction` for a revision to an archived finding and include the original record in `linked_records`.
 - Keep manual entries concise. Routine commands and repeated status checks need no extra research entry. Include only material authorized for this project and omit credentials, private transcripts, and raw tool output.
 

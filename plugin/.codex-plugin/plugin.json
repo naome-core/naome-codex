@@ -1,6 +1,6 @@
 {
   "name": "naome-codex",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Create NAOME research projects and record evidence from enrolled Codex workspaces.",
   "license": "MIT",
   "skills": "./skills",

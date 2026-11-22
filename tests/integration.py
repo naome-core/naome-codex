@@ -114,34 +114,38 @@ def main():
         ):
             context = hook("UserPromptSubmit", work, session, prompt=prompt)["hookSpecificOutput"]["additionalContext"]
             assert "For substantive R&D in this enrolled workspace, apply the naome-lab-research skill." in context
-            assert "use record_research for separate question and method entries" in context
+            assert "use capture_research for separate question and method entries" in context
             assert "Follow the user and workspace instructions for permission to record and send evidence." in context
             assert "Use delivery=local unless assignment delivery is authorized." in context
             assert "If recording is restricted or an approval is denied, continue the allowed work" in context
             assert "For routine edits, maintenance and status checks, rely on automatic hook capture" in context
-            assert "Use list_recent_research for the latest research records" in context
+            assert "Use lookup_research for reads during analysis" in context
             assert "use the displayed research card as the answer" in context
             assert re.search(r"binding_token [A-Za-z0-9_-]+", context)
 
-        uri = "ui://naome/research-card-v2.html"
+        uri = "ui://naome/research-card-v3.html"
         legacy_uri = "ui://naome/research-card-v1.html"
+        previous_uri = "ui://naome/research-card-v2.html"
         responses = mcp([{"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
                          {"method": "notifications/initialized"}, {"id": 2, "method": "tools/list"},
                          {"id": 3, "method": "resources/list"},
                          {"id": 4, "method": "resources/read", "params": {"uri": uri}},
                          {"id": 5, "method": "resources/read", "params": {"uri": "ui://naome/unknown.html"}},
                          {"id": 6, "method": "resources/templates/list"},
-                         {"id": 7, "method": "resources/read", "params": {"uri": legacy_uri}}])
+                         {"id": 7, "method": "resources/read", "params": {"uri": legacy_uri}},
+                         {"id": 8, "method": "resources/read", "params": {"uri": previous_uri}}])
         assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
         assert "resources" in responses[0]["result"]["capabilities"]
         descriptors = {item["name"]: item for item in responses[1]["result"]["tools"]}
         assert descriptors.keys() == {
             "create_project", "research_status", "select_lab", "list_recent_research", "search_research",
-            "record_research", "retry_research_delivery",
+            "lookup_research", "record_research", "capture_research", "retry_research_delivery",
         }
         assert descriptors["search_research"]["annotations"]["readOnlyHint"] is True
         assert descriptors["list_recent_research"]["annotations"]["readOnlyHint"] is True
         assert descriptors["record_research"]["annotations"]["readOnlyHint"] is False
+        assert descriptors["capture_research"]["annotations"] == descriptors["record_research"]["annotations"]
+        assert descriptors["lookup_research"]["annotations"] == descriptors["search_research"]["annotations"]
         assert descriptors["record_research"]["inputSchema"]["properties"]["delivery"]["default"] == "assigned"
         card_tools = {name: item["_meta"] for name, item in descriptors.items() if "_meta" in item}
         assert card_tools.keys() == {"record_research", "list_recent_research", "search_research"}
@@ -160,6 +164,7 @@ def main():
         assert responses[4]["error"]["code"] == -32002
         assert responses[5]["result"] == {"resourceTemplates": []}
         assert responses[6]["result"]["contents"] == [{**resource, "uri": legacy_uri}]
+        assert responses[7]["result"]["contents"] == [{**resource, "uri": previous_uri}]
 
         def show_local(node, identifier):
             snapshot = cli(node, "archive", "snapshot", "Integration local readback",
@@ -206,6 +211,10 @@ def main():
         assert archived["subject"] == card["title"]
         assert archived["fields"]["summary"] == summary.strip() and archived["fields"]["sources"] == sources
         assert [(entry["role"], entry["target"]) for entry in archived["inputs"]] == [("references", origin)]
+        short_receipt = call_tool("capture_research", token, category="result", title=card["title"],
+                                  summary=summary, sources=sources, linked_records=[origin])
+        assert set(short_receipt) == {"isError", "content"} and not short_receipt["isError"]
+        assert json.loads(short_receipt["content"][0]["text"])["local_record"] == record
 
         # A newer receipt in a different project must stay separate even on a shared lab.
         other_token = token_for(desk, "other-project-receipts")
@@ -221,12 +230,22 @@ def main():
         status = json.loads(queued["content"][0]["text"])
         assert not queued["isError"] and status["pending_local"] == 1 and status["local_record"] is None
         assert "structuredContent" not in queued and "_meta" not in queued
+        pending_receipt = call_tool("capture_research", token, category="method",
+                                    title="Deferred locally", summary="Repeat the readback.", sources=[])
+        assert set(pending_receipt) == {"isError", "content"} and not pending_receipt["isError"]
+        pending = json.loads(pending_receipt["content"][0]["text"])
+        assert pending["local_record"] is None and pending["pending_local"] == 1 and pending["local_retry"]
+        rejected_capture = call_tool("capture_research", token, category="result",
+                                     title="Missing evidence", summary="This result needs provenance.", sources=[])
+        assert rejected_capture["isError"] and set(rejected_capture) == {"isError", "content"}
+        assert "need evidence references" in rejected_capture["content"][0]["text"]
         recent_result = call_tool("list_recent_research", reader, limit=10)
         assert not recent_result["isError"], recent_result
         recent = json.loads(recent_result["content"][0]["text"])
         assert recent_result["structuredContent"] == recent
-        assert recent_result["_meta"] == {"naome/research-summaries": {
-            record: summary.strip(), origin: "The archive is available locally.",
+        assert recent_result["_meta"] == {"naome/research-details": {
+            record: {"summary": summary.strip(), "sources": sources, "linked_records": [origin]},
+            origin: {"summary": "The archive is available locally.", "sources": [], "linked_records": []},
         }}
         assert (recent["project"], recent["lab"], recent["source"]) == (
             "repo-research", "default", "codex_archive_receipts")
@@ -237,7 +256,13 @@ def main():
             "preview": card["summary"],
         }
         assert summary.strip() not in json.dumps(recent)
-        assert sources[0] not in json.dumps(recent_result)
+        assert sources[0] not in json.dumps(recent)
+        background = call_tool("lookup_research", reader)
+        assert set(background) == {"isError", "content"} and not background["isError"]
+        lookup, = json.loads(background["content"][0]["text"])["records"]
+        assert (lookup["record_id"], lookup["summary"], lookup["sources"], lookup["linked_records"]) == (
+            record, summary.strip(), sources, [origin],
+        )
         assert json.loads(tool("list_recent_research", reader)[1])["records"] == recent["records"][:1]
         assert tool("list_recent_research", reader, limit=True)[0]
         assert tool("list_recent_research", reader, lab="other")[0]
@@ -284,6 +309,9 @@ def main():
         assert [item["record_id"] for item in selected["records"]] == [other_record]
         search = call_tool("search_research", reader, query=other_record, **other_target)["structuredContent"]
         assert search["project"] == "naome-network" and search["hits"][0]["record_id"] == other_record
+        background = call_tool("lookup_research", reader, query=other_record, **other_target)
+        assert set(background) == {"isError", "content"} and not background["isError"]
+        assert json.loads(background["content"][0]["text"]) == search
         failed, body = tool("search_research", reader, query=record, **other_target)
         assert not failed and json.loads(body)["hits"] == []
         assert tool("list_recent_research", reader, project="repo-research")[0]
@@ -295,7 +323,35 @@ def main():
         search = call_tool("search_research", reader, query=record)["structuredContent"]
         assert search["project"] == "repo" and search["hits"][0]["record_id"] == record
         assert archived["scope"] == "repo-research"
+
+        invalid = {**renamed, "naome-network": {**renamed["naome-network"], "default_lab": "absent"}}
+        config.write_text(json.dumps({"naome": str(NAOME), "projects": invalid}))
+        reader = token_for(work, "reader-session", "invalid-neighbor")
+        assert call_tool("list_recent_research", reader)["structuredContent"]["project"] == "repo"
+        failed, error = tool("list_recent_research", reader, **other_target)
+        assert failed and "naome-network" in error and "default_lab" in error, error
+        own_config_error = hook("UserPromptSubmit", desk, "desk-session", turn_id="invalid-own")[
+            "hookSpecificOutput"]["additionalContext"]
+        assert "naome-network" in own_config_error and "default_lab" in own_config_error
+        assert "binding_token " not in own_config_error
+
         config.write_text(json.dumps({"naome": str(NAOME), "projects": projects}))
+
+        def git(*args):
+            subprocess.run(["git", "-C", work, *args], check=True, capture_output=True)
+
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "--allow-empty", "-m", "Fixture")
+        linked, nested = temp / "linked-worktree", work / "nested-repo"
+        git("worktree", "add", "--detach", str(linked))
+        git("init", "-q", str(nested))
+        token_for(work, "reader-session", "worktree-hook")
+        event = {"turn_id": "worktree-hook", "tool_name": "Bash", "tool_use_id": "linked",
+                 "tool_input": {}, "tool_response": {"exit_code": 0}}
+        assert "in the local archive" in json.dumps(hook("PostToolUse", linked, "reader-session", **event))
+        assert hook("PostToolUse", nested, "reader-session", **{**event, "tool_use_id": "nested"}) == {}
+        assert hook("PostToolUse", desk, "reader-session", **{**event, "tool_use_id": "other"}) == {}
+
         lab_config_path.write_text(json.dumps(lab_config))
 
         started = []
