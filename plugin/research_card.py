@@ -36,6 +36,7 @@ def read_resource(uri):
             "prefersBorder": False,
             "csp": {"connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": []},
         },
+        "openai/ui": {"availableDisplayModes": ["inline"]},
         "openai/widgetShowCodexWidgetInline": True,
         "openai/widgetMinFrameHeight": 0,
         "openai/widgetHeightHint": 104,

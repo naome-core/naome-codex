@@ -239,7 +239,8 @@
     new ResizeObserver(reportSize).observe(results);
     send({ id: 1, method: 'ui/initialize', params: {
       appInfo: { name: 'Naome research records', version: '0.1.0' },
-      appCapabilities: {}, protocolVersion: '2026-01-26'
+      appCapabilities: { availableDisplayModes: ['inline'] },
+      protocolVersion: '2026-01-26'
     } });
   })();
 </script>

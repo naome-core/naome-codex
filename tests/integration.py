@@ -150,6 +150,7 @@ def main():
         assert responses[2]["result"]["resources"] == [{"uri": uri, "name": "Naome research block", "mimeType": mime}]
         resource, = responses[3]["result"]["contents"]
         assert resource["uri"] == uri and resource["mimeType"] == mime
+        assert resource["_meta"]["openai/ui"]["availableDisplayModes"] == ["inline"]
         assert resource["_meta"]["openai/widgetShowCodexWidgetInline"] is True
         assert resource["_meta"]["openai/widgetMinFrameHeight"] == 0
         assert resource["_meta"]["openai/widgetHeightHint"] == 104

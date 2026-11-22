@@ -81,6 +81,7 @@ function widget(locale) {
   const deliver = (data, source = parent) => events.get('message')({ source, data: { jsonrpc: '2.0', ...data } });
   const receive = (params) => deliver({ method: 'ui/notifications/tool-result', params });
   assert.equal(messages[0].method, 'ui/initialize');
+  assert.deepEqual([...messages[0].params.appCapabilities.availableDisplayModes], ['inline']);
   deliver({ id: 1, result: {} }, {});
   receive(written);
   assert.equal(results.hidden, true);
