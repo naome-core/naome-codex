@@ -1,5 +1,5 @@
 {
-  "network_version": "0.3.0",
-  "protocol_version": "0.1.3",
-  "macos_arm64_sha256": "4c595d3617c5da1791927b08205621464b4a64af8925b37dd77c5198c9e99eed"
+  "network_version": "0.4.0",
+  "protocol_version": "0.1.4",
+  "macos_arm64_sha256": "f06f2483908963b1f49970138de6cdf5491f97ecfde36d5ab1cd1f60fd1343d2"
 }
