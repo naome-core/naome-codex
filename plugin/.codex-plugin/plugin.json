@@ -1,6 +1,6 @@
 {
   "name": "naome-codex",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Record research from an enrolled Codex workspace in a local NAOME lab.",
   "license": "MIT",
   "skills": "./skills",
