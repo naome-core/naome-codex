@@ -37,7 +37,7 @@ TOOLS = [
                          "description": "A short lowercase name for the new project and its folder."},
              "mode": {"type": "string", "enum": ["local", "network"], "default": "local"},
          }, ["project"]),
-    tool("research_status", "Show the local archive status and any assigned laboratory job.",
+    tool("research_status", "Show pending work for the selected lab and across this chat, and the current assignment.",
          TOKENS, ["binding_token"]),
     tool("record_research", "Record a structured research step using evidence this turn actually observed.",
          {
@@ -69,7 +69,7 @@ def do_tool(name, arguments):
         raise ValueError("The active Codex turn has no valid Naome lab token.")
     if name == "research_status":
         return {"project": binding["project"], "lab": binding["lab_name"], "job": binding["job"],
-                **bridge.status(binding)}
+                **bridge.status(binding, include_chat=True)}
     if name == "retry_research_delivery":
         return bridge.flush(binding)
     if name != "record_research":
@@ -115,7 +115,9 @@ def context_output(binding, progress):
         f"Keep the token out of research records and chat replies. "
         f"Report unknowns explicitly and use only evidence authorized for the project. "
         f"Local archive pending: {progress['pending_local']}. "
-        f"Assigned reports pending submission: {progress['pending_reports']}."
+        f"Assigned reports pending submission: {progress['pending_reports']}. "
+        f"Across this chat's labs: {progress['chat_pending_local']} pending local writes and "
+        f"{progress['chat_pending_reports']} pending report submissions."
     )
     return prompt_context(context)
 
@@ -188,7 +190,7 @@ def hook(payload):
             bridge.archive(binding, offset, budget=0.8)
         else:
             progress = bridge.flush(binding)
-            if any(progress.get(key) for key in ("pending_local", "pending_reports", "local_retry", "report_retry")):
+            if any(progress.get(key) for key in ("chat_pending_local", "chat_pending_reports", "local_retry", "report_retry")):
                 return {"systemMessage": "NAOME still has local records or assigned reports queued."}
     return {}
 

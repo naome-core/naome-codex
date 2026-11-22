@@ -137,6 +137,13 @@ def main():
             assert "pending local queue" in json.dumps(tool_event("two", "deferred-tool"))
             a2 = choose("three", "Continue with the chat default.", "A")
             assert len({a, a2, b}) == 3
+            status = tool(a2, "research_status")
+            assert status["pending_local"] == status["pending_reports"] == 0, status
+            assert status["chat_pending_local"] == status["chat_pending_reports"] == 2, status
+            prompt_status = hook("UserPromptSubmit", "three", prompt="Continue.")
+            assert "Across this chat's labs: 2 pending local writes and 2 pending report submissions." in (
+                prompt_status["hookSpecificOutput"]["additionalContext"]
+            )
             record(b, "A stale token must never write", error=True)
             assert first["local_record"] not in archive_records(labs[1])
             choose("two", "/lab default A")
@@ -147,7 +154,8 @@ def main():
             delayed = tool_event("two", "late-tool")
             assert "in the local archive" in json.dumps(delayed)
             assert tool_event("two", "late-tool") == delayed
-            tool(a2, "retry_research_delivery")
+            status = tool(a2, "retry_research_delivery")
+            assert status["chat_pending_local"] == 0 and status["chat_pending_reports"] == 3, status
             a_docs, b_docs = [archive_records(lab) for lab in labs]
             assert first["local_record"] in a_docs and first["local_record"] not in b_docs
             assert sum(d["subject"] == old_doc["subject"] for d in a_docs.values()) == 1
@@ -161,7 +169,8 @@ def main():
             assert all(doc["fields"]["codex_turn"] == "two" for doc in b_records.values())
             assert all(doc["fields"]["naome_job"] == jobs[1] for doc in b_records.values())
             halt_report.unlink()
-            tool(a2, "retry_research_delivery")
+            status = tool(a2, "retry_research_delivery")
+            assert status["chat_pending_local"] == status["chat_pending_reports"] == 0, status
 
             for hub, expected in zip(hubs, ({first["local_record"]}, set(b_records))):
                 def published_ids():

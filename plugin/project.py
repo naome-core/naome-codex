@@ -12,6 +12,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from bridge import Bridge, DeliveryError, git_common_dir
+from network import LOOPBACK_TCP, managed_nodes, node_settings, start_node
 
 PROJECT = r"[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?"
 DEFAULT_WORKSPACE_ROOT = Path.home() / "Documents" / "NAOME Projects"
@@ -80,13 +81,13 @@ def initialize_project(bridge, name, mode):
                 with socket.socket() as lab_port, socket.socket() as orchestrator_port:
                     lab_port.bind(("127.0.0.1", 0))
                     orchestrator_port.bind(("127.0.0.1", 0))
-                    lab_addr = f"/ip4/127.0.0.1/tcp/{lab_port.getsockname()[1]}"
-                    orchestrator_addr = f"/ip4/127.0.0.1/tcp/{orchestrator_port.getsockname()[1]}"
+                    lab_addr = f"{LOOPBACK_TCP}{lab_port.getsockname()[1]}"
+                    orchestrator_addr = f"{LOOPBACK_TCP}{orchestrator_port.getsockname()[1]}"
                     write_node(lab, "lab", lab_addr, [{"id": orchestrator_id, "address": orchestrator_addr}])
                     write_node(orchestrator, "orchestrator", orchestrator_addr, [{"id": lab_id, "address": lab_addr}])
                 project.update(orchestrator=str(orchestrator), orchestrator_peer_id=orchestrator_id)
             else:
-                write_node(lab, "lab", "/ip4/127.0.0.1/tcp/0", [])
+                write_node(lab, "lab", f"{LOOPBACK_TCP}0", [])
         except DeliveryError as error:
             raise DeliveryError("Naome could not initialize the project archives. Check the installed naome CLI.") from error
 
@@ -120,41 +121,32 @@ def enroll(bridge, name, project):
 
 def project_status(bridge, name, project, created):
     lab, mode = project["lab"], project["mode"]
-    bridge.require_lab(lab)
     if not Path(project["workspace"]).is_dir():
         raise DeliveryError(f"The registered workspace for {name} is unavailable.")
     result = {"project": name, "mode": mode, "created": created, "workspace": project["workspace"],
               "lab": {"directory": lab, "peer_id": project["lab_peer_id"]}}
     if mode == "local":
+        bridge.require_lab(lab)
         result["lab"]["running"] = bridge.call(lab, "status")["running"]
         return result
 
-    orchestrator = project["orchestrator"]
-    expected = {orchestrator: project["orchestrator_peer_id"], lab: project["lab_peer_id"]}
     try:
-        for directory, role in ((orchestrator, "orchestrator"), (lab, "lab")):
-            path = Path(directory)
-            if not all((path / file).is_file() for file in ("identity.key", "archive.sqlite", "node.json")):
-                raise DeliveryError("A configured node directory is incomplete.")
-            settings = json.loads((path / "node.json").read_text())
-            if settings["role"] != role or not settings["listen"].startswith("/ip4/127.0.0.1/tcp/"):
-                raise DeliveryError("A configured node no longer matches the local project network.")
-        # Startup has a native deadline. Keep each CLI request long enough for it to clean up on failure.
-        for directory, peer_id in expected.items():
-            status = bridge.call(directory, "start", timeout=32)
-            if not status["running"] or status["peer_id"] != peer_id:
-                raise DeliveryError("The running node does not match its configured peer identity.")
+        nodes = managed_nodes(project, Path(lab), node_settings(Path(lab), "lab"))
+        for directory, peer_id in nodes.values():
+            start_node(bridge, directory, peer_id)
+        orchestrator, orchestrator_peer_id = nodes["orchestrator"]
+        _, lab_peer_id = nodes["lab"]
         deadline = time.monotonic() + 6
         while time.monotonic() < deadline:
             lab_status = bridge.call(lab, "status")
             orchestrator_status = bridge.call(orchestrator, "status")
-            if (expected[orchestrator] in lab_status["connected_peers"]
-                    and expected[lab] in orchestrator_status["connected_peers"]):
+            if (orchestrator_peer_id in lab_status["connected_peers"]
+                    and lab_peer_id in orchestrator_status["connected_peers"]):
                 result["lab"]["running"] = True
-                result["orchestrator"] = {"directory": orchestrator, "peer_id": expected[orchestrator], "running": True}
+                result["orchestrator"] = {"directory": str(orchestrator), "peer_id": orchestrator_peer_id, "running": True}
                 result["connected"] = True
                 return result
             time.sleep(0.1)
         raise DeliveryError("Both nodes did not report the expected peer connection.")
-    except DeliveryError as error:
+    except (DeliveryError, OSError, ValueError, KeyError, TypeError) as error:
         raise DeliveryError(f"Project {name} is registered, but its network is not ready. Retry the same setup. {error}") from error
