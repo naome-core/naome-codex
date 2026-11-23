@@ -47,6 +47,8 @@ def main():
                                         "session_id": session, "turn_id": turn, "tool_name": "Bash",
                                         "tool_use_id": identifier, "tool_input": {}, "tool_response": {"exit_code": 0}})
 
+        missing = value(env, "select_lab", error=True, binding_token="", lab="A")
+        assert "Settings → Hooks" in missing and "send a new message" in missing
         a, _ = prompt(env, workspace, session, "one")
         first = archive(a, "Evidence for A")
         assert first["lab"] == "A" and first["local_record"]

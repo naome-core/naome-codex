@@ -9,7 +9,7 @@ Apply this workflow to substantive R&D in an enrolled workspace when the request
 
 ## Use the lab selected for the turn
 
-Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it only in Naome tool arguments. Keep tokens out of records and replies. If the work should be recorded in a particular workspace lab, call `select_lab` with its enrolled name before starting the work. Pass `remember: true` when the user asks to keep that lab as the chat default. If no lab is selected and the intended destination is unclear, ask which configured lab to use.
+Use the binding token supplied by the current `UserPromptSubmit` hook. Pass it only in Naome tool arguments. Keep tokens out of records and replies. If the hook did not supply a token, check that the chat is in the enrolled workspace. Ask the user to review any unapproved Naome hooks in Codex Settings → Hooks and send a new message. If the work should be recorded in a particular workspace lab, call `select_lab` with its enrolled name before starting the work. Pass `remember: true` when the user asks to keep that lab as the chat default. If no lab is selected and the intended destination is unclear, ask which configured lab to use.
 
 The lab binding identifies the local archive. Follow the user's request and workspace instructions for permission to record evidence. If a write is necessary and requires permission, ask for that operation and lab. Continue the unaffected work if the host rejects a write and retry only after new authorization.
 
@@ -21,7 +21,7 @@ Use `list_recent_research` when the user asks to see recent entries and `search_
 
 Use `lookup_research` for reads during analysis. Omit `query` to read recent Codex records with their stored details. Supply `query` to search the approved snapshot. Use a question or keywords for discovery and a complete record ID for exact lookup. Treat ranked excerpts as leads and check the original evidence before using them to support a finding.
 
-Use a displayed research card as the answer when the user only asks to see records. For analysis, present the relevant findings with sources. Include the snapshot and any material coverage limits when reporting search results. If an incomplete index returns no hits, mention that more results may become available.
+Use a displayed research card as the answer when the user only asks to see records. For analysis, present the relevant findings with sources. Include the snapshot, scope, and any material coverage limits when reporting search results. If an incomplete index returns no hits, mention that more results may become available.
 
 ## Record material research milestones
 

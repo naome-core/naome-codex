@@ -128,12 +128,17 @@ class SearchSession:
             raise DeliveryError("The local NAOME search session did not return a valid result.") from error
 
 
-def approved_head(bridge, binding):
+def approved_snapshot(bridge, binding):
     lab = bridge.configured_lab(binding)
-    head = lab.get("search_head") if lab else None
+    head = lab["search_head"] if lab else None
     if not isinstance(head, str) or not ID.fullmatch(head):
         raise DeliveryError("The selected lab has no approved search snapshot. Configure its search_head.")
-    return head
+    scope = lab["search_scope"]
+    if scope is None:
+        scope = binding["project"]
+    elif not isinstance(scope, str) or not scope.strip() or "\0" in scope:
+        raise ValueError("The selected lab's search_scope must be a nonempty Protocol scope string.")
+    return head, scope
 
 
 def matches_scope(hit, scope):
@@ -147,9 +152,8 @@ def search_research(bridge, binding, arguments, session):
             and isinstance(query, str) and 0 < len(query.strip()) <= QUERY_LIMIT and "\0" not in query
             and mode in MODES and type(limit) is int and 1 <= limit <= MAX_HITS):
         raise ValueError("Invalid research search arguments.")
-    head = approved_head(bridge, binding)
+    head, scope = approved_snapshot(bridge, binding)
     bridge.require_lab(binding["lab"])
-    scope = binding["project"]
     runtime = bridge.config.get("search", {})
     if not isinstance(runtime, dict):
         raise ValueError("Configure the local search runtime as an object.")
@@ -200,19 +204,22 @@ def search_research(bridge, binding, arguments, session):
         selected = current.read_destination(authorized, arguments) if authorized else None
     except ValueError:
         selected = None
-    if not selected or (selected["project"], selected["lab"]) != (scope, binding["lab"]):
+    if not selected or (selected["project"], selected["lab"]) != (binding["project"], binding["lab"]):
         session.close()
         raise DeliveryError("Research search authorization changed while the query was running.")
-    current_lab = current.configured_lab(selected)
-    if not current_lab or current_lab.get("search_head") != head:
+    try:
+        current_snapshot = approved_snapshot(current, selected)
+    except (DeliveryError, ValueError):
+        current_snapshot = None
+    if current_snapshot != (head, scope):
         session.close()
-        raise DeliveryError("The approved search snapshot changed while the query was running.")
+        raise DeliveryError("The approved search snapshot or scope changed while the query was running.")
     coverage = "complete"
     if not exact and (report["index_complete"] is False
                       or (mode != "lexical" and report["semantic_index_complete"] is False)):
         coverage = "index_incomplete"
     elif any(report[key] is True for key in ("limited_coverage", "vector_budget_exhausted", "query_limited")):
         coverage = "limited"
-    return {"project": selected["project_name"], "lab": selected["lab_name"], "head": head, "mode": mode, "hits": hits,
-            "coverage": coverage,
+    return {"project": selected["project_name"], "lab": selected["lab_name"], "head": head, "scope": scope,
+            "mode": mode, "hits": hits, "coverage": coverage,
             **{key: report[key] for key in COVERAGE}}
