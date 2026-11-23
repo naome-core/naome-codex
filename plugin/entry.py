@@ -83,7 +83,7 @@ TOOLS = [
     tool("search_research", "Show matches in an approved snapshot when the user asks to see search results. "
          "Pass project when the user asks to look in another enrolled project. "
          "Uses the native archive search and may prepare its local derived index. Returns scoped records, "
-         "verified links, the searched snapshot and search coverage. Nonempty results have an inline card. "
+         "verified links, the searched snapshot and scope, and search coverage. Nonempty results have an inline card. "
          "An exact record ID needs no model.",
          {
              **TOKENS,
@@ -126,7 +126,11 @@ def do_tool(name, arguments, search):
         return tool_result(create_project(bridge, arguments))
     binding = bridge.authorized(arguments.get("binding_token"))
     if not binding:
-        raise ValueError("The active Codex turn has no valid Naome lab token.")
+        raise ValueError(
+            "The active Codex turn has no valid Naome lab token. Use the token supplied by this turn's "
+            "UserPromptSubmit hook. If it was missing, review the Naome hooks in Codex Settings → Hooks "
+            "and send a new message from the enrolled workspace."
+        )
     background = name in {"lookup_research", "capture_research"}
     if name == "lookup_research":
         name = "search_research" if "query" in arguments else "list_recent_research"

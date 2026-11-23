@@ -36,7 +36,8 @@ def main():
         newer = put(lab_a, "calibration", "Unapproved newer record", "Later evidence received after approval.")
         newer_head = cli(lab_a, "snapshot", "Unapproved newer inventory")
         cli(lab_a, "search-head", newer_head)
-        only_b = put(lab_b, "calibration", "Oscillator thermal run", "Temperatures stayed inside the expected range.")
+        study_scope = "oscillator-study"
+        only_b = put(lab_b, study_scope, "Oscillator thermal run", "Temperatures stayed inside the expected range.")
         head_b = cli(lab_b, "snapshot", "Approved project B", "--root", only_b)
 
         config = root / "config.json"
@@ -53,7 +54,8 @@ def main():
             f"    if Path({str(revoke)!r}).exists():\n"
             f"        config = Path({str(config)!r})\n"
             "        data = json.loads(config.read_text())\n"
-            "        data['projects']['calibration']['labs']['B'].pop('search_head')\n"
+            f"        setting = Path({str(revoke)!r}).read_text()\n"
+            "        data['projects']['calibration']['labs']['B'].pop(setting)\n"
             "        config.write_text(json.dumps(data))\n"
             "os.execv(binary, [binary, *sys.argv[1:]])\n"
         )
@@ -126,12 +128,24 @@ def main():
                 assert call(token, "detector", mode="semantic")["isError"]
                 assert not launches.exists()
                 exact = result(token, approved, mode="semantic")
-                assert exact["head"] == head_a and exact["mode"] == "lexical"
+                assert exact["head"] == head_a and exact["mode"] == "lexical" and exact["scope"] == "calibration"
                 assert exact["hits"][0]["record_id"] == approved and exact["hits"][0]["exact_id"]
                 assert exact["hits"][0]["links"] == [{"role": "references", "target": control}]
                 assert foreign not in json.dumps(exact)
                 assert result(token, foreign)["hits"] == []
                 assert result(token, newer)["hits"] == []
+                assert call(token, foreign, scope="another-project")["isError"]
+                lab_a_settings = settings["projects"]["calibration"]["labs"]["A"]
+                lab_a_settings["search_scope"] = "another-project"
+                configure()
+                scoped = result(token, foreign)
+                assert scoped["scope"] == "another-project" and scoped["hits"][0]["record_id"] == foreign
+                assert result(token, approved)["hits"] == []
+                lab_a_settings["search_scope"] = ""
+                configure()
+                assert "search_scope" in call(token, approved)["content"][0]["text"]
+                del lab_a_settings["search_scope"]
+                configure()
                 lexical = result(token, "detector")
                 assert lexical["head"] == head_a and lexical["mode"] == "lexical" and lexical["index_complete"]
                 assert lexical["hits"][0]["record_id"] == approved
@@ -156,17 +170,19 @@ def main():
 
                 assert call(token, only_b, lab="B")["isError"]
                 lab_settings = settings["projects"]["calibration"]["labs"]["B"]
-                lab_settings["search_head"] = head_b
-                configure()
-                revoke.touch()
-                rejected = call(token, only_b, lab="B")
-                assert rejected["isError"] and only_b not in json.dumps(rejected) and "structuredContent" not in rejected
-                assert "changed while the query was running" in rejected["content"][0]["text"]
-                assert call(token, only_b, lab="B")["isError"]
-                revoke.unlink()
+                lab_settings.update(search_head=head_b, search_scope=study_scope)
+                for setting in ("search_head", "search_scope"):
+                    configure()
+                    revoke.write_text(setting)
+                    rejected = call(token, only_b, lab="B")
+                    assert rejected["isError"] and only_b not in json.dumps(rejected)
+                    assert "structuredContent" not in rejected
+                    assert "changed while the query was running" in rejected["content"][0]["text"]
+                    revoke.unlink()
+                assert result(token, only_b, lab="B")["hits"] == []
                 configure()
                 response = result(token, only_b, lab="B")
-                assert response["lab"] == "B" and response["head"] == head_b
+                assert response["lab"] == "B" and response["head"] == head_b and response["scope"] == study_scope
                 assert response["hits"][0]["record_id"] == only_b
                 assert result(token, approved, lab="B")["hits"] == []
                 assert result(token, approved)["lab"] == "A"
@@ -175,7 +191,7 @@ def main():
                 assert result(next_token, approved)["lab"] == "A"
 
                 for index in range(33):
-                    put(lab_b, "calibration", f"Cold index record {index}", "Additional calibration evidence.")
+                    put(lab_b, study_scope, f"Cold index record {index}", "Additional calibration evidence.")
                 lab_settings["search_head"] = cli(lab_b, "snapshot", "Fresh search inventory")
                 configure()
                 partial = result(next_token, "nonexistentkeyword", lab="B", mode="lexical")

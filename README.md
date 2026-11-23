@@ -31,7 +31,7 @@ Ask Naome to create a project with a short name such as `calibration-study`. The
    codex plugin add naome-codex@naome-local
    ```
 
-3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session in the workspace.
+3. Review and trust the bundled hooks in **Settings → Hooks** or **Review hooks** in the Codex composer. Open or resume a local Codex session in the workspace. If Codex marks the hooks as modified after a plugin upgrade, review and approve them again. Send a new message so the prompt hook can supply that turn's lab token.
 
 ### Upgrade existing projects
 
@@ -60,7 +60,9 @@ To record in a particular lab, ask Codex to call `select_lab` before recording e
 
 Use `list_recent_research` to see confirmed Codex research receipts from the selected lab, including earlier chats. It works without a search snapshot and skips automatic hook events and pending writes. Use `lookup_research` for text results during analysis. Omit `query` to read recent receipts with their stored details.
 
-For snapshot search, set `search_head` beside the single `lab` path or on the relevant entry in `labs`. Use an inventory whose records and dependencies may be indexed locally for that project. To include newer evidence, review and approve a newer snapshot. The plugin uses the configured snapshot and checks each returned link in the same project and snapshot.
+For snapshot search, set `search_head` beside the single `lab` path or on the relevant entry in `labs`. Use an inventory whose records and dependencies may be indexed locally for that project. To include newer evidence, review and approve a newer snapshot. The plugin uses the configured snapshot and verifies each returned link in the same snapshot and scope.
+
+Search defaults to the project's archive scope. If an approved snapshot contains study records filed under a different Protocol scope, set `search_scope` next to that lab's `search_head` to the exact scope to read. This sets the search scope for both exact IDs and text queries. Codex continues to record new evidence under the project's archive scope.
 
 Use `search_research` to display matches, or supply a `query` to `lookup_research` during analysis. Search uses a question, keywords, or a complete Record ID and reports incomplete index coverage even when the current result is empty. The plugin reuses the native `nao --db FILE search-session` worker while its destination and runtime stay the same.
 
